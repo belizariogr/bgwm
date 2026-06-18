@@ -7,6 +7,35 @@ use crate::hotkeys::Hotkey;
 
 pub const CONFIG_VERSION: u32 = 1;
 
+const MIN_SETTINGS_WINDOW_WIDTH: f32 = 480.0;
+const MIN_SETTINGS_WINDOW_HEIGHT: f32 = 360.0;
+const MAX_SETTINGS_WINDOW_WIDTH: f32 = 3840.0;
+const MAX_SETTINGS_WINDOW_HEIGHT: f32 = 2160.0;
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct SettingsWindow {
+    pub width: f32,
+    pub height: f32,
+}
+
+impl Default for SettingsWindow {
+    fn default() -> Self {
+        Self {
+            width: 820.0,
+            height: 620.0,
+        }
+    }
+}
+
+impl SettingsWindow {
+    pub fn clamp(width: f32, height: f32) -> Self {
+        Self {
+            width: width.clamp(MIN_SETTINGS_WINDOW_WIDTH, MAX_SETTINGS_WINDOW_WIDTH),
+            height: height.clamp(MIN_SETTINGS_WINDOW_HEIGHT, MAX_SETTINGS_WINDOW_HEIGHT),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct AppRule {
     pub executable: String,
@@ -14,7 +43,7 @@ pub struct AppRule {
     pub workspace: u32,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Config {
     pub version: u32,
     /// 1-based workspace index → hotkey string.
@@ -22,6 +51,8 @@ pub struct Config {
     /// 1-based workspace index → hotkey string.
     pub move_hotkeys: HashMap<String, String>,
     pub app_rules: Vec<AppRule>,
+    #[serde(default)]
+    pub settings_window: SettingsWindow,
 }
 
 impl Default for Config {
@@ -37,6 +68,7 @@ impl Default for Config {
             switch_hotkeys,
             move_hotkeys,
             app_rules: Vec::new(),
+            settings_window: SettingsWindow::default(),
         }
     }
 }
@@ -107,6 +139,16 @@ impl Config {
                     "app rule workspace must be >= 1".into(),
                 ));
             }
+        }
+
+        if self.settings_window.width < MIN_SETTINGS_WINDOW_WIDTH
+            || self.settings_window.width > MAX_SETTINGS_WINDOW_WIDTH
+            || self.settings_window.height < MIN_SETTINGS_WINDOW_HEIGHT
+            || self.settings_window.height > MAX_SETTINGS_WINDOW_HEIGHT
+        {
+            return Err(ConfigError::Validation(
+                "settings window size out of allowed range".into(),
+            ));
         }
 
         Ok(())
@@ -211,5 +253,13 @@ mod tests {
             r"Google\Chrome\Application\chrome.exe",
             r"C:\Program Files\Google\Chrome\Application\chrome.exe"
         ));
+    }
+
+    #[test]
+    fn settings_window_defaults_when_missing_from_json() {
+        let json = r#"{"version":1,"switch_hotkeys":{},"move_hotkeys":{},"app_rules":[]}"#;
+        let config: Config = serde_json::from_str(&json).unwrap();
+        assert_eq!(config.settings_window, SettingsWindow::default());
+        config.validate().unwrap();
     }
 }

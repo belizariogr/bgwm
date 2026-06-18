@@ -3,7 +3,7 @@ use std::time::SystemTime;
 use eframe::egui;
 use eframe::egui::{Color32, CornerRadius, Margin, RichText, Stroke, Vec2};
 
-use crate::config::{AppRule, Config, ConfigError};
+use crate::config::{AppRule, Config, ConfigError, SettingsWindow};
 use crate::virtual_desktop::{self, WORKSPACE_INDEX_BASE};
 
 const ACCENT: Color32 = Color32::from_rgb(84, 192, 235);
@@ -27,23 +27,33 @@ pub struct SettingsApp {
     active_tab: SettingsTab,
     status: Option<String>,
     error: Option<String>,
+    last_window_size: egui::Vec2,
 }
 
 impl SettingsApp {
     pub fn new(config: Config) -> Self {
         let workspace_count = virtual_desktop::workspace_count().unwrap_or(4);
+        let last_window_size =
+            egui::vec2(config.settings_window.width, config.settings_window.height);
         Self {
             config,
             workspace_count,
             active_tab: SettingsTab::Hotkeys,
             status: None,
             error: None,
+            last_window_size,
         }
     }
 }
 
 impl eframe::App for SettingsApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        if let Some(size) = ctx.input(|i| i.viewport().inner_rect.map(|rect| rect.size())) {
+            if size.x >= 1.0 && size.y >= 1.0 {
+                self.last_window_size = size;
+            }
+        }
+
         self.draw_header(ctx);
         self.draw_footer(ctx);
 
@@ -65,6 +75,10 @@ impl eframe::App for SettingsApp {
                             });
                     });
             });
+    }
+
+    fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+        persist_settings_window_size(self.last_window_size);
     }
 }
 
@@ -355,6 +369,8 @@ impl SettingsApp {
     }
 
     fn apply(&mut self) -> Result<(), ConfigError> {
+        self.config.settings_window =
+            SettingsWindow::clamp(self.last_window_size.x, self.last_window_size.y);
         self.config.validate()?;
         crate::config::save(&self.config)?;
         Ok(())
@@ -488,6 +504,26 @@ fn secondary_button(ui: &mut egui::Ui, label: &str) -> egui::Response {
     )
 }
 
+fn persist_settings_window_size(size: egui::Vec2) {
+    if size.x < 1.0 || size.y < 1.0 {
+        return;
+    }
+
+    let clamped = SettingsWindow::clamp(size.x, size.y);
+    match crate::config::load() {
+        Ok(mut config) => {
+            if config.settings_window == clamped {
+                return;
+            }
+            config.settings_window = clamped;
+            if let Err(e) = crate::config::save(&config) {
+                tracing::warn!("failed to save settings window size: {e}");
+            }
+        }
+        Err(e) => tracing::warn!("failed to load config for settings window size: {e}"),
+    }
+}
+
 /// Runs the settings UI in its own process (separate winit EventLoop).
 pub fn run_standalone() -> Result<(), eframe::Error> {
     tracing_subscriber::fmt()
@@ -506,7 +542,10 @@ pub fn run_standalone() -> Result<(), eframe::Error> {
 
     let native_options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_inner_size([820.0, 620.0])
+            .with_inner_size([
+                config.settings_window.width,
+                config.settings_window.height,
+            ])
             .with_title("BGWM Settings"),
         ..Default::default()
     };
