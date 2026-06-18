@@ -1,5 +1,7 @@
 use std::collections::HashMap;
 use std::sync::{LazyLock, Mutex};
+use std::thread;
+use std::time::Duration;
 
 use tracing::debug;
 use windows::Win32::Foundation::{BOOL, HWND, LPARAM};
@@ -15,6 +17,8 @@ use crate::window_tracking::is_main_window;
 static LAST_FOCUSED_BY_WORKSPACE: LazyLock<Mutex<HashMap<u32, isize>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 static PENDING_PREFERRED_FOCUS: Mutex<Option<isize>> = Mutex::new(None);
+
+const FOCUS_RESTORE_DELAY: Duration = Duration::from_millis(100);
 
 pub fn allow_foreground_from_background() {
     unsafe {
@@ -43,6 +47,8 @@ pub fn set_pending_focus(hwnd: isize) {
 }
 
 pub fn restore_focus_after_desktop_change() {
+    thread::sleep(FOCUS_RESTORE_DELAY);
+
     let preferred = PENDING_PREFERRED_FOCUS
         .lock()
         .ok()
