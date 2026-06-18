@@ -1,7 +1,5 @@
-use std::collections::HashMap;
+use std::collections::HashSet;
 use std::sync::{LazyLock, Mutex};
-use std::thread;
-use std::time::Duration;
 
 use tracing::debug;
 use windows::Win32::Foundation::{BOOL, HWND, LPARAM};
@@ -12,13 +10,10 @@ use windows::Win32::UI::WindowsAndMessaging::{
     ASFW_ANY, SW_RESTORE,
 };
 
-use crate::window_tracking::is_main_window;
+use crate::window_tracking::{is_main_window, process_id_for_hwnd};
 
-static LAST_FOCUSED_BY_WORKSPACE: LazyLock<Mutex<HashMap<u32, isize>>> =
-    LazyLock::new(|| Mutex::new(HashMap::new()));
-static PENDING_PREFERRED_FOCUS: Mutex<Option<isize>> = Mutex::new(None);
-
-const FOCUS_RESTORE_DELAY: Duration = Duration::from_millis(100);
+static FOCUS_EXCLUDED_PIDS: LazyLock<Mutex<HashSet<u32>>> =
+    LazyLock::new(|| Mutex::new(HashSet::new()));
 
 pub fn allow_foreground_from_background() {
     unsafe {
@@ -26,63 +21,25 @@ pub fn allow_foreground_from_background() {
     }
 }
 
-pub fn remember_focused_workspace(workspace: u32) {
-    let Some(hwnd) = foreground_hwnd() else {
-        return;
-    };
-
-    if is_pinned(HWND(hwnd as *mut _)) {
-        return;
+/// Records PIDs of processes that already had main windows when BGWM started.
+pub fn seed_startup_focus_exclusions() {
+    let mut pids = HashSet::new();
+    unsafe {
+        let lparam = LPARAM(&mut pids as *mut _ as isize);
+        let _ = EnumWindows(Some(collect_existing_process_pids), lparam);
     }
 
-    if let Ok(mut map) = LAST_FOCUSED_BY_WORKSPACE.lock() {
-        map.insert(workspace, hwnd);
+    let count = pids.len();
+    if let Ok(mut excluded) = FOCUS_EXCLUDED_PIDS.lock() {
+        *excluded = pids;
     }
-}
-
-pub fn set_pending_focus(hwnd: isize) {
-    if let Ok(mut pending) = PENDING_PREFERRED_FOCUS.lock() {
-        *pending = Some(hwnd);
-    }
+    debug!("seeded {count} pre-existing process(es) into focus exclusion list");
 }
 
 pub fn restore_focus_after_desktop_change() {
-    thread::sleep(FOCUS_RESTORE_DELAY);
-
-    let preferred = PENDING_PREFERRED_FOCUS
-        .lock()
-        .ok()
-        .and_then(|mut pending| pending.take());
-
-    if let Some(hwnd) = preferred {
-        if focus_window_if_valid(hwnd) {
-            return;
-        }
-    }
-
-    if let Ok(ws) = super::current_workspace_index() {
-        if let Some(hwnd) = LAST_FOCUSED_BY_WORKSPACE
-            .lock()
-            .ok()
-            .and_then(|map| map.get(&ws).copied())
-        {
-            if focus_window_if_valid(hwnd) {
-                return;
-            }
-        }
-    }
-
     if let Some(hwnd) = topmost_window_on_current_desktop() {
         activate_window(hwnd);
     }
-}
-
-fn focus_window_if_valid(hwnd: isize) -> bool {
-    let hwnd = HWND(hwnd as *mut _);
-    if !is_focus_candidate(hwnd) {
-        return false;
-    }
-    activate_window(hwnd)
 }
 
 fn topmost_window_on_current_desktop() -> Option<HWND> {
@@ -96,7 +53,7 @@ fn topmost_window_on_current_desktop() -> Option<HWND> {
 
 unsafe extern "system" fn enum_top_window(hwnd: HWND, lparam: LPARAM) -> BOOL {
     let found = &mut *(lparam.0 as *mut Option<HWND>);
-    if !is_focus_candidate(hwnd) {
+    if !is_auto_focus_candidate(hwnd) {
         return BOOL(1);
     }
 
@@ -107,6 +64,33 @@ unsafe extern "system" fn enum_top_window(hwnd: HWND, lparam: LPARAM) -> BOOL {
         }
         _ => BOOL(1),
     }
+}
+
+unsafe extern "system" fn collect_existing_process_pids(hwnd: HWND, lparam: LPARAM) -> BOOL {
+    let pids = &mut *(lparam.0 as *mut HashSet<u32>);
+    if !is_main_window(hwnd) || is_own_process_window(hwnd) {
+        return BOOL(1);
+    }
+
+    if let Some(pid) = process_id_for_hwnd(hwnd.0 as isize) {
+        pids.insert(pid);
+    }
+
+    BOOL(1)
+}
+
+fn is_auto_focus_candidate(hwnd: HWND) -> bool {
+    is_focus_candidate(hwnd) && !is_focus_excluded(hwnd)
+}
+
+fn is_focus_excluded(hwnd: HWND) -> bool {
+    let Some(pid) = process_id_for_hwnd(hwnd.0 as isize) else {
+        return false;
+    };
+    FOCUS_EXCLUDED_PIDS
+        .lock()
+        .ok()
+        .is_some_and(|excluded| excluded.contains(&pid))
 }
 
 fn is_focus_candidate(hwnd: HWND) -> bool {
@@ -155,36 +139,6 @@ fn activate_window(hwnd: HWND) -> bool {
     }
 }
 
-fn foreground_hwnd() -> Option<isize> {
-    use windows::Win32::UI::WindowsAndMessaging::{GetWindow, GW_OWNER};
-
-    unsafe {
-        let hwnd = GetForegroundWindow();
-        if hwnd.0.is_null() {
-            return None;
-        }
-
-        let mut current = hwnd;
-        loop {
-            let owner = GetWindow(current, GW_OWNER);
-            match owner {
-                Ok(owner_hwnd) if !owner_hwnd.0.is_null() => current = owner_hwnd,
-                _ => break,
-            }
-        }
-
-        if !IsWindowVisible(current).as_bool() {
-            return None;
-        }
-
-        Some(current.0 as isize)
-    }
-}
-
-fn is_pinned(hwnd: HWND) -> bool {
-    winvd::is_pinned_window(hwnd).unwrap_or(false)
-}
-
 fn is_own_process_window(hwnd: HWND) -> bool {
     unsafe {
         let mut pid = 0u32;
@@ -198,8 +152,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn remember_and_pending_focus_do_not_panic() {
-        remember_focused_workspace(1);
-        set_pending_focus(0);
+    fn seed_startup_focus_exclusions_does_not_panic() {
+        seed_startup_focus_exclusions();
     }
 }

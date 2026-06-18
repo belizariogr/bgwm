@@ -76,6 +76,7 @@ impl BgwmApp {
         self.start_desktop_listener();
         self.window_watcher = Some(WindowWatcher::start());
         self.last_config_mtime = settings::config_mtime();
+        virtual_desktop::init_focus_exclusions();
     }
 
     fn start_hotkeys(&mut self) {

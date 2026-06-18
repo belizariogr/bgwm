@@ -33,33 +33,27 @@ pub fn current_workspace_index() -> Result<u32, VirtualDesktopError> {
 }
 
 pub fn switch_to_workspace(index: u32) -> Result<(), VirtualDesktopError> {
-    switch_to_workspace_impl(index, None)
+    switch_to_workspace_impl(index)
 }
 
 pub fn switch_to_workspace_focusing(
     index: u32,
-    hwnd: isize,
+    _hwnd: isize,
 ) -> Result<(), VirtualDesktopError> {
-    switch_to_workspace_impl(index, Some(hwnd))
+    switch_to_workspace(index)
 }
 
 pub fn on_desktop_changed() {
     focus::restore_focus_after_desktop_change();
 }
 
-fn switch_to_workspace_impl(
-    index: u32,
-    preferred_focus: Option<isize>,
-) -> Result<(), VirtualDesktopError> {
+pub fn init_focus_exclusions() {
+    focus::seed_startup_focus_exclusions();
+}
+
+fn switch_to_workspace_impl(index: u32) -> Result<(), VirtualDesktopError> {
     validate_index(index)?;
     let zero_based = index - WORKSPACE_INDEX_BASE;
-
-    if let Ok(current) = current_workspace_index() {
-        focus::remember_focused_workspace(current);
-    }
-    if let Some(hwnd) = preferred_focus {
-        focus::set_pending_focus(hwnd);
-    }
 
     focus::allow_foreground_from_background();
     debug!("switching to workspace {index} (api index {zero_based})");
