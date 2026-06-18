@@ -1,3 +1,4 @@
+use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime};
 use tracing::{error, info, warn};
@@ -14,7 +15,7 @@ use crate::hotkeys::{HotkeyAction, HotkeyEngine, HotkeyEvent};
 use crate::settings;
 use crate::tray::{is_exit_menu, is_settings_menu, menu_workspace_from_id, TrayController};
 use crate::virtual_desktop::{self, WORKSPACE_INDEX_BASE};
-use crate::window_tracking::{AppWindowEvent, WindowWatcher};
+use crate::window_tracking::{process_id_for_hwnd, AppWindowEvent, WindowWatcher};
 
 #[derive(Debug)]
 pub enum UserEvent {
@@ -32,6 +33,10 @@ pub struct BgwmApp {
     hotkeys: Option<HotkeyEngine>,
     _desktop_listener: Option<winvd::DesktopEventThread>,
     window_watcher: Option<WindowWatcher>,
+    /// Processes whose first main window was already routed by app rules.
+    routed_processes: HashSet<u32>,
+    /// Main window handle routed for each process (for cleanup on destroy).
+    routed_main_hwnd: HashMap<u32, isize>,
     current_workspace: u32,
     workspace_count: u32,
 }
@@ -46,6 +51,8 @@ impl BgwmApp {
             hotkeys: None,
             _desktop_listener: None,
             window_watcher: None,
+            routed_processes: HashSet::new(),
+            routed_main_hwnd: HashMap::new(),
             current_workspace: WORKSPACE_INDEX_BASE,
             workspace_count: WORKSPACE_INDEX_BASE,
         }
@@ -164,34 +171,54 @@ impl BgwmApp {
     }
 
     fn handle_app_window_event(&mut self, event: AppWindowEvent) {
-        let AppWindowEvent::MainWindowShown { hwnd, executable } = event;
-        let rules = self
-            .config
-            .lock()
-            .expect("config poisoned")
-            .app_rules
-            .clone();
-
-        for rule in rules {
-            if !matches_executable(&rule.executable, &executable) {
-                continue;
+        match event {
+            AppWindowEvent::MainWindowDestroyed { pid, hwnd } => {
+                if self.routed_main_hwnd.get(&pid).is_some_and(|&h| h == hwnd) {
+                    self.routed_processes.remove(&pid);
+                    self.routed_main_hwnd.remove(&pid);
+                }
             }
+            AppWindowEvent::MainWindowShown { hwnd, executable } => {
+                let Some(pid) = process_id_for_hwnd(hwnd) else {
+                    return;
+                };
+                if self.routed_processes.contains(&pid) {
+                    return;
+                }
 
-            info!(
-                "routing {executable} to workspace {} (hwnd {hwnd})",
-                rule.workspace
-            );
+                let rules = self
+                    .config
+                    .lock()
+                    .expect("config poisoned")
+                    .app_rules
+                    .clone();
 
-            if let Err(e) = virtual_desktop::move_window_to_workspace(hwnd, rule.workspace) {
-                warn!("failed to move window for app rule: {e}");
-                continue;
+                for rule in rules {
+                    if !matches_executable(&rule.executable, &executable) {
+                        continue;
+                    }
+
+                    info!(
+                        "routing {executable} to workspace {} (hwnd {hwnd}, pid {pid})",
+                        rule.workspace
+                    );
+
+                    if let Err(e) = virtual_desktop::move_window_to_workspace(hwnd, rule.workspace)
+                    {
+                        warn!("failed to move window for app rule: {e}");
+                        continue;
+                    }
+                    if let Err(e) =
+                        virtual_desktop::switch_to_workspace_focusing(rule.workspace, hwnd)
+                    {
+                        warn!("failed to switch workspace for app rule: {e}");
+                    }
+
+                    self.routed_processes.insert(pid);
+                    self.routed_main_hwnd.insert(pid, hwnd);
+                    break;
+                }
             }
-            if let Err(e) =
-                virtual_desktop::switch_to_workspace_focusing(rule.workspace, hwnd)
-            {
-                warn!("failed to switch workspace for app rule: {e}");
-            }
-            break;
         }
     }
 

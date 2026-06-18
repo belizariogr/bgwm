@@ -4,14 +4,15 @@ use tracing::error;
 use windows::Win32::Foundation::HWND;
 use windows::Win32::UI::Accessibility::{SetWinEventHook, UnhookWinEvent, HWINEVENTHOOK};
 use windows::Win32::UI::WindowsAndMessaging::{
-    EVENT_OBJECT_SHOW, EVENT_SYSTEM_FOREGROUND, WINEVENT_OUTOFCONTEXT,
+    EVENT_OBJECT_DESTROY, EVENT_OBJECT_SHOW, WINEVENT_OUTOFCONTEXT,
 };
 
-use super::{executable_for_hwnd, is_main_window};
+use super::{executable_for_hwnd, is_main_window, process_id_for_hwnd};
 
 #[derive(Debug, Clone)]
 pub enum AppWindowEvent {
     MainWindowShown { hwnd: isize, executable: String },
+    MainWindowDestroyed { pid: u32, hwnd: isize },
 }
 
 pub struct WindowWatcher {
@@ -68,7 +69,15 @@ fn run_winevent_thread(tx: Sender<AppWindowEvent>) -> Result<(), WatcherError> {
         }
 
         let hwnd = hwnd_raw.0 as isize;
-        if !is_main_window(hwnd_raw) {
+
+        if event == EVENT_OBJECT_DESTROY {
+            if let Some(pid) = process_id_for_hwnd(hwnd) {
+                let _ = tx.send(AppWindowEvent::MainWindowDestroyed { pid, hwnd });
+            }
+            return;
+        }
+
+        if event != EVENT_OBJECT_SHOW || !is_main_window(hwnd_raw) {
             return;
         }
 
@@ -76,12 +85,7 @@ fn run_winevent_thread(tx: Sender<AppWindowEvent>) -> Result<(), WatcherError> {
             return;
         };
 
-        match event {
-            x if x == EVENT_OBJECT_SHOW || x == EVENT_SYSTEM_FOREGROUND => {
-                let _ = tx.send(AppWindowEvent::MainWindowShown { hwnd, executable });
-            }
-            _ => {}
-        }
+        let _ = tx.send(AppWindowEvent::MainWindowShown { hwnd, executable });
     }
 
     let hook_show = unsafe {
@@ -99,10 +103,10 @@ fn run_winevent_thread(tx: Sender<AppWindowEvent>) -> Result<(), WatcherError> {
         return Err(WatcherError::HookInstall("EVENT_OBJECT_SHOW".into()));
     }
 
-    let hook_foreground = unsafe {
+    let hook_destroy = unsafe {
         SetWinEventHook(
-            EVENT_SYSTEM_FOREGROUND,
-            EVENT_SYSTEM_FOREGROUND,
+            EVENT_OBJECT_DESTROY,
+            EVENT_OBJECT_DESTROY,
             None,
             Some(callback),
             0,
@@ -110,11 +114,11 @@ fn run_winevent_thread(tx: Sender<AppWindowEvent>) -> Result<(), WatcherError> {
             WINEVENT_OUTOFCONTEXT,
         )
     };
-    if hook_foreground.is_invalid() {
+    if hook_destroy.is_invalid() {
         unsafe {
             let _ = UnhookWinEvent(hook_show);
         }
-        return Err(WatcherError::HookInstall("EVENT_SYSTEM_FOREGROUND".into()));
+        return Err(WatcherError::HookInstall("EVENT_OBJECT_DESTROY".into()));
     }
 
     loop {
@@ -129,7 +133,7 @@ fn run_winevent_thread(tx: Sender<AppWindowEvent>) -> Result<(), WatcherError> {
 
     unsafe {
         let _ = UnhookWinEvent(hook_show);
-        let _ = UnhookWinEvent(hook_foreground);
+        let _ = UnhookWinEvent(hook_destroy);
     }
 
     Ok(())

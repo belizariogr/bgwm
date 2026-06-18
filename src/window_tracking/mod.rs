@@ -2,6 +2,17 @@ mod watcher;
 
 pub use watcher::{AppWindowEvent, WindowWatcher};
 
+pub fn process_id_for_hwnd(hwnd: isize) -> Option<u32> {
+    use windows::Win32::UI::WindowsAndMessaging::GetWindowThreadProcessId;
+
+    let hwnd = HWND(hwnd as *mut _);
+    unsafe {
+        let mut pid = 0u32;
+        GetWindowThreadProcessId(hwnd, Some(&mut pid));
+        (pid != 0).then_some(pid)
+    }
+}
+
 use std::path::Path;
 use windows::Win32::Foundation::HWND;
 use windows::Win32::System::Threading::{
