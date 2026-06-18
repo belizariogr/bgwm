@@ -5,10 +5,11 @@ use tracing::debug;
 use windows::Win32::Foundation::{BOOL, HWND, LPARAM};
 use windows::Win32::System::Threading::{AttachThreadInput, GetCurrentProcessId, GetCurrentThreadId};
 use windows::Win32::UI::WindowsAndMessaging::{
-    AllowSetForegroundWindow, BringWindowToTop, EnumWindows, GetForegroundWindow,
+    AllowSetForegroundWindow, BringWindowToTop, EnumWindows, FindWindowW, GetForegroundWindow,
     GetWindowThreadProcessId, IsIconic, IsWindow, IsWindowVisible, SetForegroundWindow, ShowWindow,
     ASFW_ANY, SW_RESTORE,
 };
+use windows::core::PCWSTR;
 
 use crate::window_tracking::{is_main_window, process_id_for_hwnd};
 
@@ -39,6 +40,19 @@ pub fn seed_startup_focus_exclusions() {
 pub fn restore_focus_after_desktop_change() {
     if let Some(hwnd) = topmost_window_on_current_desktop() {
         activate_window(hwnd);
+    }
+}
+
+pub fn focus_window_by_title(title: &str) -> bool {
+    unsafe {
+        let title_w: Vec<u16> = title.encode_utf16().chain(std::iter::once(0)).collect();
+        let Ok(hwnd) = FindWindowW(None, PCWSTR(title_w.as_ptr())) else {
+            return false;
+        };
+        if hwnd.0.is_null() {
+            return false;
+        }
+        activate_window(hwnd)
     }
 }
 

@@ -12,6 +12,7 @@ use winvd::DesktopEvent;
 
 use crate::config::{self, matches_executable, Config};
 use crate::hotkeys::{HotkeyAction, HotkeyEngine, HotkeyEvent};
+use crate::process_job::ChildProcessJob;
 use crate::settings;
 use crate::tray::{is_exit_menu, is_settings_menu, menu_workspace_from_id, TrayController};
 use crate::virtual_desktop::{self, WORKSPACE_INDEX_BASE};
@@ -60,6 +61,7 @@ pub struct BgwmApp {
     pending_app_routes: Vec<PendingAppRoute>,
     current_workspace: u32,
     workspace_count: u32,
+    child_job: Option<ChildProcessJob>,
 }
 
 impl BgwmApp {
@@ -77,6 +79,7 @@ impl BgwmApp {
             pending_app_routes: Vec::new(),
             current_workspace: WORKSPACE_INDEX_BASE,
             workspace_count: WORKSPACE_INDEX_BASE,
+            child_job: None,
         }
     }
 
@@ -99,6 +102,11 @@ impl BgwmApp {
         self.window_watcher = Some(WindowWatcher::start());
         self.last_config_mtime = settings::config_mtime();
         virtual_desktop::init_focus_exclusions();
+
+        match ChildProcessJob::new() {
+            Ok(job) => self.child_job = Some(job),
+            Err(e) => error!("failed to create child process job: {e}"),
+        }
     }
 
     fn start_hotkeys(&mut self) {
@@ -316,9 +324,19 @@ impl BgwmApp {
         }
     }
 
-    fn open_settings(&self) {
-        if let Err(e) = settings::spawn_settings_process() {
+    fn open_settings(&mut self) {
+        let Some(job) = self.child_job.as_ref() else {
+            error!("child process job not initialized");
+            return;
+        };
+        if let Err(e) = settings::open_settings(job) {
             error!("failed to open settings window: {e}");
+        }
+    }
+
+    fn shutdown(&mut self) {
+        if let Some(job) = self.child_job.as_ref() {
+            job.terminate_all();
         }
     }
 
@@ -397,6 +415,7 @@ impl ApplicationHandler<UserEvent> for BgwmApp {
             UserEvent::Menu(menu_event) => {
                 let id = menu_event.id;
                 if is_exit_menu(&id) {
+                    self.shutdown();
                     event_loop.exit();
                     return;
                 }

@@ -5,7 +5,14 @@ use eframe::egui::{Color32, CornerRadius, Margin, RichText, Stroke, Vec2};
 
 use crate::config::{AppRule, Config, ConfigError, SettingsWindow};
 use crate::hotkeys::hotkey_help_sections;
+use crate::process_job::ChildProcessJob;
 use crate::virtual_desktop::{self, WORKSPACE_INDEX_BASE};
+use windows::Win32::Foundation::{CloseHandle, GetLastError, ERROR_ALREADY_EXISTS, HANDLE};
+use windows::Win32::System::Threading::CreateMutexW;
+use windows::core::PCWSTR;
+
+pub const SETTINGS_WINDOW_TITLE: &str = "BGWM Settings";
+const SETTINGS_INSTANCE_MUTEX: &str = "Local\\bgwm-settings";
 
 const ACCENT: Color32 = Color32::from_rgb(84, 192, 235);
 const ACCENT_MUTED: Color32 = Color32::from_rgb(76, 219, 196);
@@ -613,6 +620,11 @@ pub fn run_standalone() -> Result<(), eframe::Error> {
         )
         .init();
 
+    let Some(_instance_lock) = acquire_settings_instance_lock() else {
+        focus_settings_window();
+        return Ok(());
+    };
+
     let config = crate::config::load().map_err(|e| {
         eframe::Error::AppCreation(Box::new(std::io::Error::new(
             std::io::ErrorKind::InvalidData,
@@ -626,12 +638,12 @@ pub fn run_standalone() -> Result<(), eframe::Error> {
                 config.settings_window.width,
                 config.settings_window.height,
             ])
-            .with_title("BGWM Settings"),
+            .with_title(SETTINGS_WINDOW_TITLE),
         ..Default::default()
     };
 
     eframe::run_native(
-        "BGWM Settings",
+        SETTINGS_WINDOW_TITLE,
         native_options,
         Box::new(|cc| {
             apply_theme(&cc.egui_ctx);
@@ -640,9 +652,48 @@ pub fn run_standalone() -> Result<(), eframe::Error> {
     )
 }
 
-pub fn spawn_settings_process() -> Result<(), std::io::Error> {
+struct SettingsInstanceLock {
+    handle: HANDLE,
+}
+
+impl Drop for SettingsInstanceLock {
+    fn drop(&mut self) {
+        unsafe {
+            let _ = CloseHandle(self.handle);
+        }
+    }
+}
+
+fn acquire_settings_instance_lock() -> Option<SettingsInstanceLock> {
+    unsafe {
+        let name: Vec<u16> = SETTINGS_INSTANCE_MUTEX
+            .encode_utf16()
+            .chain(std::iter::once(0))
+            .collect();
+        let handle = CreateMutexW(None, true, PCWSTR(name.as_ptr())).ok()?;
+        if GetLastError() == ERROR_ALREADY_EXISTS {
+            let _ = CloseHandle(handle);
+            return None;
+        }
+        Some(SettingsInstanceLock { handle })
+    }
+}
+
+pub fn focus_settings_window() -> bool {
+    virtual_desktop::focus_window_by_title(SETTINGS_WINDOW_TITLE)
+}
+
+pub fn open_settings(job: &ChildProcessJob) -> Result<(), std::io::Error> {
+    if focus_settings_window() {
+        return Ok(());
+    }
+    spawn_settings_process(job)
+}
+
+pub fn spawn_settings_process(job: &ChildProcessJob) -> Result<(), std::io::Error> {
     let exe = std::env::current_exe()?;
-    std::process::Command::new(exe).arg("--settings").spawn()?;
+    let child = std::process::Command::new(exe).arg("--settings").spawn()?;
+    job.assign_child(&child);
     Ok(())
 }
 

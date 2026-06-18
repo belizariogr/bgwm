@@ -51,6 +51,10 @@ pub fn init_focus_exclusions() {
     focus::seed_startup_focus_exclusions();
 }
 
+pub fn focus_window_by_title(title: &str) -> bool {
+    focus::focus_window_by_title(title)
+}
+
 fn switch_to_workspace_impl(index: u32) -> Result<(), VirtualDesktopError> {
     validate_index(index)?;
     let zero_based = index - WORKSPACE_INDEX_BASE;
