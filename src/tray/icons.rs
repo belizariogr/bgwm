@@ -131,7 +131,14 @@ fn blit_digit_scaled(
             let px = dst_x + sx as f32 * scale;
             let py = dst_y + sy as f32 * scale;
             if scale >= 0.99 {
-                blit_pixel(canvas, canvas_w, canvas_h, px.round() as i32, py.round() as i32, &digit.rgba[src_idx..src_idx + 4]);
+                blit_pixel(
+                    canvas,
+                    canvas_w,
+                    canvas_h,
+                    px.round() as i32,
+                    py.round() as i32,
+                    &digit.rgba[src_idx..src_idx + 4],
+                );
             } else {
                 blit_pixel(
                     canvas,
@@ -259,7 +266,12 @@ fn assets_dir() -> PathBuf {
     if let Ok(exe) = std::env::current_exe() {
         if let Some(dir) = exe.parent() {
             let bundled = dir.join("assets");
-            if bundled.join("tray").join("ref").join("border.png").is_file() {
+            if bundled
+                .join("tray")
+                .join("ref")
+                .join("border.png")
+                .is_file()
+            {
                 return bundled;
             }
         }
@@ -304,8 +316,8 @@ mod tests {
     #[test]
     #[ignore = "manual visual check: writes PNG previews to target/tray_previews/"]
     fn dump_preview_icons() {
-        use std::fs;
         use image::RgbaImage;
+        use std::fs;
 
         let out_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("target")

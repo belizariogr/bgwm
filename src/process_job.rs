@@ -6,8 +6,8 @@ use tracing::warn;
 use windows::Win32::Foundation::{CloseHandle, HANDLE};
 use windows::Win32::System::JobObjects::{
     AssignProcessToJobObject, CreateJobObjectW, JobObjectExtendedLimitInformation,
-    JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
-    SetInformationJobObject, TerminateJobObject,
+    SetInformationJobObject, TerminateJobObject, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
+    JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
 };
 
 /// Windows job object that terminates assigned child processes when closed.
@@ -32,9 +32,7 @@ impl ChildProcessJob {
     }
 
     pub fn assign(&self, child: &Child) -> windows::core::Result<()> {
-        unsafe {
-            AssignProcessToJobObject(self.handle, HANDLE(child.as_raw_handle() as _))
-        }
+        unsafe { AssignProcessToJobObject(self.handle, HANDLE(child.as_raw_handle() as _)) }
     }
 
     pub fn assign_child(&self, child: &Child) {

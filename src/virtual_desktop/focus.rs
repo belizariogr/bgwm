@@ -3,14 +3,16 @@ use std::sync::{LazyLock, Mutex};
 use std::time::Duration;
 
 use tracing::debug;
+use windows::core::PCWSTR;
 use windows::Win32::Foundation::{BOOL, HWND, LPARAM};
-use windows::Win32::System::Threading::{AttachThreadInput, GetCurrentProcessId, GetCurrentThreadId};
+use windows::Win32::System::Threading::{
+    AttachThreadInput, GetCurrentProcessId, GetCurrentThreadId,
+};
 use windows::Win32::UI::WindowsAndMessaging::{
     AllowSetForegroundWindow, BringWindowToTop, EnumWindows, FindWindowW, GetForegroundWindow,
     GetWindowThreadProcessId, IsIconic, IsWindow, IsWindowVisible, SetForegroundWindow, ShowWindow,
     ASFW_ANY, SW_RESTORE,
 };
-use windows::core::PCWSTR;
 
 use crate::window_tracking::{is_main_window, process_id_for_hwnd};
 

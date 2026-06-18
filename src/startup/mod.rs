@@ -1,12 +1,14 @@
 use std::path::{Path, PathBuf};
 
 use thiserror::Error;
-use windows::Win32::Foundation::{ERROR_FILE_NOT_FOUND, ERROR_NOT_FOUND, ERROR_SUCCESS, WIN32_ERROR};
+use windows::core::PCWSTR;
+use windows::Win32::Foundation::{
+    ERROR_FILE_NOT_FOUND, ERROR_NOT_FOUND, ERROR_SUCCESS, WIN32_ERROR,
+};
 use windows::Win32::System::Registry::{
     RegCloseKey, RegCreateKeyExW, RegDeleteValueW, RegOpenKeyExW, RegSetValueExW, HKEY,
     HKEY_CURRENT_USER, KEY_SET_VALUE, KEY_WRITE, REG_OPTION_NON_VOLATILE, REG_SZ,
 };
-use windows::core::PCWSTR;
 
 use crate::config::StartupSettings;
 
@@ -46,7 +48,9 @@ fn startup_command(exe: &Path) -> String {
 fn set_run_registry(exe: &Path) -> Result<(), StartupError> {
     let command = startup_command(exe);
     let value_data = wide_null(&command);
-    with_registry_key(RUN_KEY, |key| set_string_value(key, REG_VALUE_NAME, &value_data))
+    with_registry_key(RUN_KEY, |key| {
+        set_string_value(key, REG_VALUE_NAME, &value_data)
+    })
 }
 
 fn remove_run_registry() -> Result<(), StartupError> {

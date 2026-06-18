@@ -104,7 +104,12 @@ impl BgwmApp {
         self.start_hotkeys();
         self.start_desktop_listener();
         self.startup_pids = existing_main_window_pids();
-        let app_rules = self.config.lock().expect("config poisoned").app_rules.clone();
+        let app_rules = self
+            .config
+            .lock()
+            .expect("config poisoned")
+            .app_rules
+            .clone();
         for rule in &app_rules {
             for pid in running_pids_for_executable(&rule.executable) {
                 self.startup_pids.insert(pid);
@@ -390,12 +395,7 @@ impl BgwmApp {
     }
 
     fn sync_startup_registration(&self) {
-        let startup = self
-            .config
-            .lock()
-            .expect("config poisoned")
-            .startup
-            .clone();
+        let startup = self.config.lock().expect("config poisoned").startup.clone();
         if let Err(e) = crate::startup::apply(&startup) {
             warn!("startup registration sync failed: {e}");
         }

@@ -7,8 +7,8 @@ use crate::config::{AppRule, Config, ConfigError, SettingsWindow};
 use crate::hotkeys::hotkey_help_sections;
 use crate::process_job::ChildProcessJob;
 use crate::virtual_desktop::{self, WORKSPACE_INDEX_BASE};
-use windows::Win32::UI::WindowsAndMessaging::FindWindowW;
 use windows::core::PCWSTR;
+use windows::Win32::UI::WindowsAndMessaging::FindWindowW;
 
 pub const SETTINGS_WINDOW_TITLE: &str = "BGWM Settings";
 const APP_RULE_WORKSPACE_WIDTH: f32 = 80.0;
@@ -92,12 +92,10 @@ impl eframe::App for SettingsApp {
                         ui.set_min_size(viewport);
                         egui::Frame::new()
                             .inner_margin(Margin::symmetric(24, 20))
-                            .show(ui, |ui| {
-                                match self.active_tab {
-                                    SettingsTab::General => self.draw_general_tab(ui),
-                                    SettingsTab::Hotkeys => self.draw_hotkeys_tab(ui),
-                                    SettingsTab::AppRules => self.draw_app_rules_tab(ui),
-                                }
+                            .show(ui, |ui| match self.active_tab {
+                                SettingsTab::General => self.draw_general_tab(ui),
+                                SettingsTab::Hotkeys => self.draw_hotkeys_tab(ui),
+                                SettingsTab::AppRules => self.draw_app_rules_tab(ui),
                             });
                     });
             });
@@ -219,7 +217,9 @@ impl SettingsApp {
                                 .cloned()
                                 .unwrap_or_default();
 
-                            ui.label(RichText::new(format!("Workspace {ws}")).color(Color32::WHITE));
+                            ui.label(
+                                RichText::new(format!("Workspace {ws}")).color(Color32::WHITE),
+                            );
                             let mut text = binding;
                             let response = ui.add(
                                 egui::TextEdit::singleline(&mut text)
@@ -267,7 +267,9 @@ impl SettingsApp {
                                 .cloned()
                                 .unwrap_or_default();
 
-                            ui.label(RichText::new(format!("Workspace {ws}")).color(Color32::WHITE));
+                            ui.label(
+                                RichText::new(format!("Workspace {ws}")).color(Color32::WHITE),
+                            );
                             let mut text = binding;
                             let response = ui.add(
                                 egui::TextEdit::singleline(&mut text)
@@ -304,9 +306,11 @@ impl SettingsApp {
                                 .color(TEXT_MUTED),
                         );
                         ui.label(
-                            RichText::new("Add an executable such as chrome.exe to route new windows.")
-                                .size(13.0)
-                                .color(TEXT_MUTED),
+                            RichText::new(
+                                "Add an executable such as chrome.exe to route new windows.",
+                            )
+                            .size(13.0)
+                            .color(TEXT_MUTED),
                         );
                         ui.add_space(12.0);
                     });
@@ -383,8 +387,7 @@ impl SettingsApp {
                     for (idx, action) in picker_actions {
                         match action {
                             ExecutablePickerAction::OpenWindowList => {
-                                self.pickable_windows =
-                                    executable_picker::list_pickable_windows();
+                                self.pickable_windows = executable_picker::list_pickable_windows();
                                 self.window_picker_rule = Some(idx);
                             }
                             ExecutablePickerAction::SelectedExecutable(exe) => {
@@ -402,11 +405,9 @@ impl SettingsApp {
                 ui.horizontal(|ui| {
                     if ui
                         .add(
-                            egui::Button::new(
-                                RichText::new("+ Add rule").color(Color32::WHITE),
-                            )
-                            .fill(SURFACE_ELEVATED)
-                            .stroke(Stroke::new(1.0, BORDER)),
+                            egui::Button::new(RichText::new("+ Add rule").color(Color32::WHITE))
+                                .fill(SURFACE_ELEVATED)
+                                .stroke(Stroke::new(1.0, BORDER)),
                         )
                         .clicked()
                     {
@@ -436,16 +437,12 @@ impl SettingsApp {
             .default_size([520.0, 420.0])
             .show(ctx, |ui| {
                 ui.label(
-                    RichText::new("Choose a window to use its executable name.")
-                        .color(TEXT_MUTED),
+                    RichText::new("Choose a window to use its executable name.").color(TEXT_MUTED),
                 );
                 ui.add_space(8.0);
 
                 if windows.is_empty() {
-                    ui.label(
-                        RichText::new("No suitable windows found.")
-                            .color(TEXT_MUTED),
-                    );
+                    ui.label(RichText::new("No suitable windows found.").color(TEXT_MUTED));
                 } else {
                     egui::ScrollArea::vertical()
                         .auto_shrink([false; 2])
@@ -526,7 +523,8 @@ impl SettingsApp {
             SettingsWindow::clamp(self.last_window_size.x, self.last_window_size.y);
         self.config.validate()?;
         crate::config::save(&self.config)?;
-        crate::startup::apply(&self.config.startup).map_err(|e| ConfigError::Validation(e.to_string()))?;
+        crate::startup::apply(&self.config.startup)
+            .map_err(|e| ConfigError::Validation(e.to_string()))?;
         Ok(())
     }
 }
@@ -607,11 +605,7 @@ fn tab_button(ui: &mut egui::Ui, active: &mut SettingsTab, tab: SettingsTab, lab
     } else {
         Stroke::new(1.0, BORDER)
     };
-    let text_color = if selected {
-        Color32::WHITE
-    } else {
-        TEXT_MUTED
-    };
+    let text_color = if selected { Color32::WHITE } else { TEXT_MUTED };
 
     if ui
         .add(
@@ -765,9 +759,13 @@ fn hotkey_help_popup(ui: &mut egui::Ui) {
 
 fn primary_button(ui: &mut egui::Ui, label: &str) -> egui::Response {
     ui.add(
-        egui::Button::new(RichText::new(label).strong().color(Color32::from_rgb(16, 24, 32)))
-            .fill(ACCENT)
-            .stroke(Stroke::new(1.0, ACCENT_MUTED.gamma_multiply(0.6))),
+        egui::Button::new(
+            RichText::new(label)
+                .strong()
+                .color(Color32::from_rgb(16, 24, 32)),
+        )
+        .fill(ACCENT)
+        .stroke(Stroke::new(1.0, ACCENT_MUTED.gamma_multiply(0.6))),
     )
 }
 
@@ -833,10 +831,7 @@ pub fn run_standalone() -> Result<(), eframe::Error> {
     })?;
 
     let mut viewport = egui::ViewportBuilder::default()
-        .with_inner_size([
-            config.settings_window.width,
-            config.settings_window.height,
-        ])
+        .with_inner_size([config.settings_window.width, config.settings_window.height])
         .with_title(SETTINGS_WINDOW_TITLE);
     if let Some(icon) = load_app_icon() {
         viewport = viewport.with_icon(icon);

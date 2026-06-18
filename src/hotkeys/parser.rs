@@ -313,7 +313,10 @@ mod tests {
     fn hotkey_help_lists_special_keys() {
         let sections = hotkey_help_sections();
         assert_eq!(sections.len(), 3);
-        assert!(sections[2].entries.iter().any(|entry| entry.primary == "F1–F12"));
+        assert!(sections[2]
+            .entries
+            .iter()
+            .any(|entry| entry.primary == "F1–F12"));
     }
 
     #[test]

@@ -4,9 +4,9 @@ pub mod virtual_desktop;
 pub mod window_tracking;
 
 mod app;
-mod startup;
 mod process_job;
 pub mod settings;
+mod startup;
 mod tray;
 
 pub fn run() -> Result<(), Box<dyn std::error::Error>> {

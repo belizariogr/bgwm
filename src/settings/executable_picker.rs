@@ -1,13 +1,15 @@
 use std::mem::size_of;
 use std::path::Path;
 
+use windows::core::PWSTR;
 use windows::Win32::Foundation::{BOOL, HWND, LPARAM};
 use windows::Win32::System::Threading::GetCurrentProcessId;
 use windows::Win32::UI::Controls::Dialogs::{
-    GetOpenFileNameW, OPENFILENAMEW, OFN_EXPLORER, OFN_FILEMUSTEXIST, OFN_PATHMUSTEXIST,
+    GetOpenFileNameW, OFN_EXPLORER, OFN_FILEMUSTEXIST, OFN_PATHMUSTEXIST, OPENFILENAMEW,
 };
-use windows::Win32::UI::WindowsAndMessaging::{EnumWindows, GetWindowTextW, GetWindowThreadProcessId};
-use windows::core::PWSTR;
+use windows::Win32::UI::WindowsAndMessaging::{
+    EnumWindows, GetWindowTextW, GetWindowThreadProcessId,
+};
 
 use crate::window_tracking::{executable_for_hwnd, is_main_window};
 
@@ -20,7 +22,10 @@ pub struct PickableWindow {
 pub fn list_pickable_windows() -> Vec<PickableWindow> {
     let mut windows = Vec::new();
     unsafe {
-        let _ = EnumWindows(Some(collect_pickable_window), LPARAM(&mut windows as *mut _ as isize));
+        let _ = EnumWindows(
+            Some(collect_pickable_window),
+            LPARAM(&mut windows as *mut _ as isize),
+        );
     }
     windows.sort_by(|left: &PickableWindow, right: &PickableWindow| {
         left.title

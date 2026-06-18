@@ -36,10 +36,7 @@ pub fn switch_to_workspace(index: u32) -> Result<(), VirtualDesktopError> {
     switch_to_workspace_impl(index)
 }
 
-pub fn switch_to_workspace_focusing(
-    index: u32,
-    _hwnd: isize,
-) -> Result<(), VirtualDesktopError> {
+pub fn switch_to_workspace_focusing(index: u32, _hwnd: isize) -> Result<(), VirtualDesktopError> {
     switch_to_workspace(index)
 }
 
