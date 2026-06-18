@@ -9,11 +9,13 @@
 //!
 //! 1. **Win key-down** — swallow (OS never sees it yet).
 //! 2. **Registered combo while Win held** — swallow combo key, fire action, remember chord.
-//! 3. **Win key-up after chord** — swallow; inject marked synthetic key-ups to clear
+//! 3. **Unregistered combo while Win held** — inject synthetic Win down (unmarked), pass the
+//!    physical key through so OS shortcuts (e.g. Win+E) work; on Win up inject Win up only.
+//! 4. **Win key-up after registered chord** — swallow; inject marked synthetic key-ups to clear
 //!    `GetAsyncKeyState` without opening Start menu.
-//! 4. **Win key-up alone (no chord)** — swallow physical up; inject a synthetic Win
+//! 5. **Win key-up alone (no chord)** — swallow physical up; inject a synthetic Win
 //!    tap (down + up, unmarked) so Start menu opens normally.
-//! 5. **Injected events** — always passed through unchanged (Start tap + our cleanup).
+//! 6. **Injected events** — marked cleanup is swallowed; unmarked injection passes through.
 
 use crossbeam_channel::{Receiver, Sender};
 use std::collections::HashMap;
@@ -71,12 +73,20 @@ struct ActiveChord {
     win_vk: VIRTUAL_KEY,
 }
 
+/// Unregistered Win combo: we injected Win down and forwarded the main key to the OS.
+#[derive(Debug, Clone, Copy)]
+struct PassthroughChord {
+    win_vk: VIRTUAL_KEY,
+}
+
 struct HookState {
     switch: HashMap<BindingKey, u32>,
     r#move: HashMap<BindingKey, u32>,
     /// Win key-down was swallowed; waiting for combo or release.
     win_held: Option<VIRTUAL_KEY>,
     active_chord: Option<ActiveChord>,
+    /// Synthetic Win down was injected for an unregistered combo.
+    passthrough_chord: Option<PassthroughChord>,
     /// Non-Win hotkey main key whose key-up should be swallowed.
     suppressed_key: Option<u16>,
     /// Swallow one extra physical Win up after chord cleanup (user still holding Win).
@@ -106,6 +116,7 @@ impl HotkeyEngine {
             r#move: bindings_map(r#move),
             win_held: None,
             active_chord: None,
+            passthrough_chord: None,
             suppressed_key: None,
             swallow_extra_win_up: false,
         }));
@@ -224,6 +235,11 @@ fn handle_key_up(state: &Arc<Mutex<HookState>>, vk: VIRTUAL_KEY) -> bool {
             return true;
         }
 
+        if let Some(chord) = st.passthrough_chord.take() {
+            inject_win_up(chord.win_vk);
+            return true;
+        }
+
         if let Some(chord) = st.active_chord.take() {
             st.win_held = None;
             inject_chord_release(chord);
@@ -290,6 +306,11 @@ fn handle_key_down(state: &Arc<Mutex<HookState>>, vk: VIRTUAL_KEY) -> bool {
         });
 
     let Some(action) = matched else {
+        if let Some(win_vk) = win_held {
+            st.passthrough_chord = Some(PassthroughChord { win_vk });
+            st.win_held = None;
+            inject_win_down(win_vk);
+        }
         return false;
     };
 
@@ -311,10 +332,21 @@ fn handle_key_down(state: &Arc<Mutex<HookState>>, vk: VIRTUAL_KEY) -> bool {
 
 /// Synthetic Win tap to open Start menu after we swallowed the physical Win down.
 fn inject_win_tap(vk: VIRTUAL_KEY) {
+    inject_win_down(vk);
+    inject_win_up(vk);
+}
+
+fn inject_win_down(vk: VIRTUAL_KEY) {
     let down = key_event(vk, false, false);
+    unsafe {
+        SendInput(&[down], size_of::<INPUT>() as i32);
+    }
+}
+
+fn inject_win_up(vk: VIRTUAL_KEY) {
     let up = key_event(vk, true, false);
     unsafe {
-        SendInput(&[down, up], size_of::<INPUT>() as i32);
+        SendInput(&[up], size_of::<INPUT>() as i32);
     }
 }
 
