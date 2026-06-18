@@ -36,6 +36,12 @@ impl SettingsWindow {
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct StartupSettings {
+    #[serde(default)]
+    pub launch_at_login: bool,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct AppRule {
     pub executable: String,
@@ -53,6 +59,8 @@ pub struct Config {
     pub app_rules: Vec<AppRule>,
     #[serde(default)]
     pub settings_window: SettingsWindow,
+    #[serde(default)]
+    pub startup: StartupSettings,
 }
 
 impl Default for Config {
@@ -69,6 +77,7 @@ impl Default for Config {
             move_hotkeys,
             app_rules: Vec::new(),
             settings_window: SettingsWindow::default(),
+            startup: StartupSettings::default(),
         }
     }
 }
@@ -260,6 +269,7 @@ mod tests {
         let json = r#"{"version":1,"switch_hotkeys":{},"move_hotkeys":{},"app_rules":[]}"#;
         let config: Config = serde_json::from_str(&json).unwrap();
         assert_eq!(config.settings_window, SettingsWindow::default());
+        assert_eq!(config.startup, StartupSettings::default());
         config.validate().unwrap();
     }
 }

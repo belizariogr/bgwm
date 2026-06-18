@@ -1,6 +1,8 @@
 mod schema;
 
-pub use schema::{matches_executable, AppRule, Config, ConfigError, SettingsWindow};
+pub use schema::{
+    matches_executable, AppRule, Config, ConfigError, SettingsWindow, StartupSettings,
+};
 
 use std::fs;
 use std::path::{Path, PathBuf};

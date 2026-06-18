@@ -117,6 +117,7 @@ impl BgwmApp {
         self.window_watcher = Some(WindowWatcher::start());
         self.last_config_mtime = settings::config_mtime();
         virtual_desktop::init_focus_exclusions();
+        self.sync_startup_registration();
 
         match ChildProcessJob::new() {
             Ok(job) => self.child_job = Some(job),
@@ -374,13 +375,29 @@ impl BgwmApp {
 
         match config::load() {
             Ok(updated) => {
+                let startup = updated.startup.clone();
                 if let Ok(mut cfg) = self.config.lock() {
                     *cfg = updated;
                 }
                 self.reload_hotkeys();
+                if let Err(e) = crate::startup::apply(&startup) {
+                    warn!("startup registration sync failed: {e}");
+                }
                 info!("config reloaded after settings save");
             }
             Err(e) => warn!("config reload failed: {e}"),
+        }
+    }
+
+    fn sync_startup_registration(&self) {
+        let startup = self
+            .config
+            .lock()
+            .expect("config poisoned")
+            .startup
+            .clone();
+        if let Err(e) = crate::startup::apply(&startup) {
+            warn!("startup registration sync failed: {e}");
         }
     }
 

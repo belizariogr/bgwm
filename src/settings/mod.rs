@@ -31,6 +31,7 @@ const ERROR: Color32 = Color32::from_rgb(248, 113, 113);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum SettingsTab {
+    General,
     Hotkeys,
     AppRules,
 }
@@ -60,7 +61,7 @@ impl SettingsApp {
         Self {
             config,
             workspace_count,
-            active_tab: SettingsTab::Hotkeys,
+            active_tab: SettingsTab::General,
             status: None,
             error: None,
             last_window_size,
@@ -93,6 +94,7 @@ impl eframe::App for SettingsApp {
                             .inner_margin(Margin::symmetric(24, 20))
                             .show(ui, |ui| {
                                 match self.active_tab {
+                                    SettingsTab::General => self.draw_general_tab(ui),
                                     SettingsTab::Hotkeys => self.draw_hotkeys_tab(ui),
                                     SettingsTab::AppRules => self.draw_app_rules_tab(ui),
                                 }
@@ -136,9 +138,9 @@ impl SettingsApp {
                                 );
                                 ui.add_space(2.0);
                                 ui.label(
-                                    RichText::new(format!(
-                                        "Manage workspace hotkeys and app routing · numbered from {WORKSPACE_INDEX_BASE}"
-                                    ))
+                                    RichText::new(
+                                        "Manage startup, workspace hotkeys, and app routing · numbered from {WORKSPACE_INDEX_BASE}",
+                                    )
                                     .size(13.0)
                                     .color(TEXT_MUTED),
                                 );
@@ -172,8 +174,21 @@ impl SettingsApp {
     fn draw_tab_bar(&mut self, ui: &mut egui::Ui) {
         ui.spacing_mut().item_spacing.x = 0.0;
         ui.horizontal(|ui| {
+            tab_button(ui, &mut self.active_tab, SettingsTab::General, "General");
             tab_button(ui, &mut self.active_tab, SettingsTab::Hotkeys, "Hotkeys");
             tab_button(ui, &mut self.active_tab, SettingsTab::AppRules, "App rules");
+        });
+    }
+
+    fn draw_general_tab(&mut self, ui: &mut egui::Ui) {
+        section_card(ui, "Windows startup", "", |ui| {
+            let mut launch_at_login = self.config.startup.launch_at_login;
+            if ui
+                .checkbox(&mut launch_at_login, "Start BGWM when Windows starts")
+                .changed()
+            {
+                self.config.startup.launch_at_login = launch_at_login;
+            }
         });
     }
 
@@ -511,6 +526,7 @@ impl SettingsApp {
             SettingsWindow::clamp(self.last_window_size.x, self.last_window_size.y);
         self.config.validate()?;
         crate::config::save(&self.config)?;
+        crate::startup::apply(&self.config.startup).map_err(|e| ConfigError::Validation(e.to_string()))?;
         Ok(())
     }
 }
@@ -566,9 +582,13 @@ fn section_card(
                     .strong()
                     .color(Color32::WHITE),
             );
-            ui.add_space(4.0);
-            ui.label(RichText::new(subtitle).size(13.0).color(TEXT_MUTED));
-            ui.add_space(14.0);
+            if !subtitle.is_empty() {
+                ui.add_space(4.0);
+                ui.label(RichText::new(subtitle).size(13.0).color(TEXT_MUTED));
+                ui.add_space(14.0);
+            } else {
+                ui.add_space(12.0);
+            }
             ui.separator();
             ui.add_space(12.0);
             add_contents(ui);
