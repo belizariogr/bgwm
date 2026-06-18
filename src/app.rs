@@ -15,7 +15,27 @@ use crate::hotkeys::{HotkeyAction, HotkeyEngine, HotkeyEvent};
 use crate::settings;
 use crate::tray::{is_exit_menu, is_settings_menu, menu_workspace_from_id, TrayController};
 use crate::virtual_desktop::{self, WORKSPACE_INDEX_BASE};
-use crate::window_tracking::{process_id_for_hwnd, AppWindowEvent, WindowWatcher};
+use crate::window_tracking::{is_window_valid, process_id_for_hwnd, AppWindowEvent, WindowWatcher};
+
+const ROUTE_RETRY_DELAYS: [Duration; 7] = [
+    Duration::ZERO,
+    Duration::from_millis(50),
+    Duration::from_millis(100),
+    Duration::from_millis(200),
+    Duration::from_millis(400),
+    Duration::from_millis(800),
+    Duration::from_millis(1600),
+];
+
+#[derive(Debug)]
+struct PendingAppRoute {
+    hwnd: isize,
+    pid: u32,
+    workspace: u32,
+    executable: String,
+    attempt: usize,
+    due: Instant,
+}
 
 #[derive(Debug)]
 pub enum UserEvent {
@@ -37,6 +57,7 @@ pub struct BgwmApp {
     routed_processes: HashSet<u32>,
     /// Main window handle routed for each process (for cleanup on destroy).
     routed_main_hwnd: HashMap<u32, isize>,
+    pending_app_routes: Vec<PendingAppRoute>,
     current_workspace: u32,
     workspace_count: u32,
 }
@@ -53,6 +74,7 @@ impl BgwmApp {
             window_watcher: None,
             routed_processes: HashSet::new(),
             routed_main_hwnd: HashMap::new(),
+            pending_app_routes: Vec::new(),
             current_workspace: WORKSPACE_INDEX_BASE,
             workspace_count: WORKSPACE_INDEX_BASE,
         }
@@ -130,11 +152,17 @@ impl BgwmApp {
     fn handle_hotkey(&mut self, action: HotkeyAction) {
         match action {
             HotkeyAction::SwitchWorkspace(ws) => {
+                if self.current_workspace == ws {
+                    return;
+                }
                 if let Err(e) = virtual_desktop::switch_to_workspace(ws) {
                     warn!("switch workspace failed: {e}");
                 }
             }
             HotkeyAction::MoveWindowToWorkspace(ws) => {
+                if self.current_workspace == ws {
+                    return;
+                }
                 match virtual_desktop::move_focused_window_to_workspace(ws) {
                     Ok(hwnd) => {
                         if let Err(e) = virtual_desktop::switch_to_workspace_focusing(ws, hwnd) {
@@ -174,6 +202,7 @@ impl BgwmApp {
     fn handle_app_window_event(&mut self, event: AppWindowEvent) {
         match event {
             AppWindowEvent::MainWindowDestroyed { pid, hwnd } => {
+                self.pending_app_routes.retain(|route| route.pid != pid);
                 if self.routed_main_hwnd.get(&pid).is_some_and(|&h| h == hwnd) {
                     self.routed_processes.remove(&pid);
                     self.routed_main_hwnd.remove(&pid);
@@ -199,27 +228,91 @@ impl BgwmApp {
                         continue;
                     }
 
+                    if self.pending_app_routes.iter().any(|route| route.pid == pid) {
+                        break;
+                    }
+
                     info!(
                         "routing {executable} to workspace {} (hwnd {hwnd}, pid {pid})",
                         rule.workspace
                     );
 
-                    if let Err(e) = virtual_desktop::move_window_to_workspace(hwnd, rule.workspace)
-                    {
-                        warn!("failed to move window for app rule: {e}");
-                        continue;
-                    }
-                    if let Err(e) =
-                        virtual_desktop::switch_to_workspace_focusing(rule.workspace, hwnd)
-                    {
-                        warn!("failed to switch workspace for app rule: {e}");
-                    }
-
-                    self.routed_processes.insert(pid);
-                    self.routed_main_hwnd.insert(pid, hwnd);
+                    self.pending_app_routes.push(PendingAppRoute {
+                        hwnd,
+                        pid,
+                        workspace: rule.workspace,
+                        executable,
+                        attempt: 0,
+                        due: Instant::now(),
+                    });
                     break;
                 }
             }
+        }
+    }
+
+    fn poll_pending_app_routes(&mut self) {
+        let now = Instant::now();
+        let mut completed = Vec::new();
+
+        for (index, route) in self.pending_app_routes.iter_mut().enumerate() {
+            if route.due > now {
+                continue;
+            }
+
+            if !is_window_valid(route.hwnd) {
+                completed.push(index);
+                continue;
+            }
+
+            match virtual_desktop::move_window_to_workspace(route.hwnd, route.workspace) {
+                Ok(()) => {
+                    if self.current_workspace != route.workspace {
+                        if let Err(e) = virtual_desktop::switch_to_workspace_focusing(
+                            route.workspace,
+                            route.hwnd,
+                        ) {
+                            warn!("failed to switch workspace for app rule: {e}");
+                        }
+                    }
+
+                    if route.attempt > 0 {
+                        info!(
+                            "routed {} to workspace {} after {} retries",
+                            route.executable, route.workspace, route.attempt
+                        );
+                    }
+
+                    self.routed_processes.insert(route.pid);
+                    self.routed_main_hwnd.insert(route.pid, route.hwnd);
+                    completed.push(index);
+                }
+                Err(e) if virtual_desktop::is_window_not_found(&e) => {
+                    if route.attempt + 1 < ROUTE_RETRY_DELAYS.len() {
+                        route.attempt += 1;
+                        route.due = now + ROUTE_RETRY_DELAYS[route.attempt];
+                    } else {
+                        warn!(
+                            "failed to route {} to workspace {} after {} attempts: {e}",
+                            route.executable,
+                            route.workspace,
+                            route.attempt + 1
+                        );
+                        completed.push(index);
+                    }
+                }
+                Err(e) => {
+                    warn!(
+                        "failed to route {} to workspace {}: {e}",
+                        route.executable, route.workspace
+                    );
+                    completed.push(index);
+                }
+            }
+        }
+
+        for index in completed.into_iter().rev() {
+            self.pending_app_routes.swap_remove(index);
         }
     }
 
@@ -275,6 +368,7 @@ impl BgwmApp {
             self.handle_app_window_event(event);
         }
 
+        self.poll_pending_app_routes();
         self.poll_config_reload();
     }
 }

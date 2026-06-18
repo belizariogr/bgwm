@@ -13,6 +13,13 @@ pub fn process_id_for_hwnd(hwnd: isize) -> Option<u32> {
     }
 }
 
+pub fn is_window_valid(hwnd: isize) -> bool {
+    use windows::Win32::UI::WindowsAndMessaging::IsWindow;
+
+    let hwnd = HWND(hwnd as *mut _);
+    unsafe { IsWindow(hwnd).as_bool() }
+}
+
 use std::path::Path;
 use windows::Win32::Foundation::HWND;
 use windows::Win32::System::Threading::{

@@ -70,6 +70,13 @@ pub fn move_window_to_workspace(hwnd: isize, index: u32) -> Result<(), VirtualDe
     Ok(())
 }
 
+pub fn is_window_not_found(err: &VirtualDesktopError) -> bool {
+    matches!(
+        err,
+        VirtualDesktopError::Api(msg) if msg.contains("WindowNotFound")
+    )
+}
+
 pub fn move_focused_window_to_workspace(index: u32) -> Result<isize, VirtualDesktopError> {
     let hwnd = focused_hwnd().ok_or(VirtualDesktopError::NoFocusedWindow)?;
     move_window_to_workspace(hwnd, index)?;
