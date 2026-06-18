@@ -18,14 +18,10 @@ use crate::tray::{is_exit_menu, is_settings_menu, menu_workspace_from_id, TrayCo
 use crate::virtual_desktop::{self, WORKSPACE_INDEX_BASE};
 use crate::window_tracking::{is_window_valid, process_id_for_hwnd, AppWindowEvent, WindowWatcher};
 
-const ROUTE_RETRY_DELAYS: [Duration; 7] = [
+const ROUTE_RETRY_DELAYS: [Duration; 3] = [
     Duration::ZERO,
     Duration::from_millis(50),
     Duration::from_millis(100),
-    Duration::from_millis(200),
-    Duration::from_millis(400),
-    Duration::from_millis(800),
-    Duration::from_millis(1600),
 ];
 
 #[derive(Debug)]

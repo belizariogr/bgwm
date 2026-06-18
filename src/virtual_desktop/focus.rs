@@ -1,5 +1,6 @@
 use std::collections::HashSet;
 use std::sync::{LazyLock, Mutex};
+use std::time::Duration;
 
 use tracing::debug;
 use windows::Win32::Foundation::{BOOL, HWND, LPARAM};
@@ -15,6 +16,8 @@ use crate::window_tracking::{is_main_window, process_id_for_hwnd};
 
 static FOCUS_EXCLUDED_PIDS: LazyLock<Mutex<HashSet<u32>>> =
     LazyLock::new(|| Mutex::new(HashSet::new()));
+
+const DESKTOP_FOCUS_DELAY: Duration = Duration::from_millis(50);
 
 pub fn allow_foreground_from_background() {
     unsafe {
@@ -38,9 +41,22 @@ pub fn seed_startup_focus_exclusions() {
 }
 
 pub fn restore_focus_after_desktop_change() {
-    if let Some(hwnd) = topmost_window_on_current_desktop() {
-        activate_window(hwnd);
-    }
+    let expected_workspace = match super::current_workspace_index() {
+        Ok(idx) => idx,
+        Err(_) => return,
+    };
+
+    std::thread::spawn(move || {
+        std::thread::sleep(DESKTOP_FOCUS_DELAY);
+
+        if super::current_workspace_index().ok() != Some(expected_workspace) {
+            return;
+        }
+
+        if let Some(hwnd) = topmost_window_on_current_desktop() {
+            activate_window(hwnd);
+        }
+    });
 }
 
 pub fn focus_window_by_title(title: &str) -> bool {
