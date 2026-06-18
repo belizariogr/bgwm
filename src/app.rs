@@ -16,7 +16,10 @@ use crate::process_job::ChildProcessJob;
 use crate::settings;
 use crate::tray::{is_exit_menu, is_settings_menu, menu_workspace_from_id, TrayController};
 use crate::virtual_desktop::{self, WORKSPACE_INDEX_BASE};
-use crate::window_tracking::{is_window_valid, process_id_for_hwnd, AppWindowEvent, WindowWatcher};
+use crate::window_tracking::{
+    existing_main_window_pids, is_window_valid, process_has_main_window, process_id_for_hwnd,
+    running_pids_for_executable, AppWindowEvent, WindowWatcher,
+};
 
 const ROUTE_RETRY_DELAYS: [Duration; 3] = [
     Duration::ZERO,
@@ -54,6 +57,8 @@ pub struct BgwmApp {
     routed_processes: HashSet<u32>,
     /// Main window handle routed for each process (for cleanup on destroy).
     routed_main_hwnd: HashMap<u32, isize>,
+    /// Processes that already had main windows when BGWM started; excluded from app routing.
+    startup_pids: HashSet<u32>,
     pending_app_routes: Vec<PendingAppRoute>,
     current_workspace: u32,
     workspace_count: u32,
@@ -73,6 +78,7 @@ impl BgwmApp {
             window_watcher: None,
             routed_processes: HashSet::new(),
             routed_main_hwnd: HashMap::new(),
+            startup_pids: HashSet::new(),
             pending_app_routes: Vec::new(),
             current_workspace: WORKSPACE_INDEX_BASE,
             workspace_count: WORKSPACE_INDEX_BASE,
@@ -97,6 +103,17 @@ impl BgwmApp {
 
         self.start_hotkeys();
         self.start_desktop_listener();
+        self.startup_pids = existing_main_window_pids();
+        let app_rules = self.config.lock().expect("config poisoned").app_rules.clone();
+        for rule in &app_rules {
+            for pid in running_pids_for_executable(&rule.executable) {
+                self.startup_pids.insert(pid);
+            }
+        }
+        info!(
+            "ignoring {} pre-existing process(es) for app routing",
+            self.startup_pids.len()
+        );
         self.window_watcher = Some(WindowWatcher::start());
         self.last_config_mtime = settings::config_mtime();
         virtual_desktop::init_focus_exclusions();
@@ -209,6 +226,9 @@ impl BgwmApp {
         match event {
             AppWindowEvent::MainWindowDestroyed { pid, hwnd } => {
                 self.pending_app_routes.retain(|route| route.pid != pid);
+                if self.startup_pids.contains(&pid) && !process_has_main_window(pid) {
+                    self.startup_pids.remove(&pid);
+                }
                 if self.routed_main_hwnd.get(&pid).is_some_and(|&h| h == hwnd) {
                     self.routed_processes.remove(&pid);
                     self.routed_main_hwnd.remove(&pid);
@@ -218,6 +238,9 @@ impl BgwmApp {
                 let Some(pid) = process_id_for_hwnd(hwnd) else {
                     return;
                 };
+                if self.startup_pids.contains(&pid) {
+                    return;
+                }
                 if self.routed_processes.contains(&pid) {
                     return;
                 }

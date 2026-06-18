@@ -2,9 +2,27 @@ mod watcher;
 
 pub use watcher::{AppWindowEvent, WindowWatcher};
 
-pub fn process_id_for_hwnd(hwnd: isize) -> Option<u32> {
-    use windows::Win32::UI::WindowsAndMessaging::GetWindowThreadProcessId;
+use std::collections::HashSet;
+use std::path::Path;
+use windows::Win32::Foundation::{BOOL, CloseHandle, HWND, LPARAM};
+use windows::Win32::System::Diagnostics::ToolHelp::{
+    CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W, TH32CS_SNAPPROCESS,
+};
+use windows::Win32::System::Threading::{
+    GetCurrentProcessId, OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_FORMAT,
+    PROCESS_QUERY_LIMITED_INFORMATION,
+};
+use windows::Win32::UI::WindowsAndMessaging::{
+    EnumWindows, GetClassNameW, GetWindow, GetWindowLongPtrW, GetWindowThreadProcessId,
+    IsWindowVisible, GWL_EXSTYLE, GWL_STYLE, GW_OWNER, WS_EX_TOOLWINDOW, WS_POPUP,
+};
 
+use crate::config::matches_executable;
+
+const MAIN_WINDOW_MIN_WIDTH: i32 = 100;
+const MAIN_WINDOW_MIN_HEIGHT: i32 = 100;
+
+pub fn process_id_for_hwnd(hwnd: isize) -> Option<u32> {
     let hwnd = HWND(hwnd as *mut _);
     unsafe {
         let mut pid = 0u32;
@@ -20,18 +38,71 @@ pub fn is_window_valid(hwnd: isize) -> bool {
     unsafe { IsWindow(hwnd).as_bool() }
 }
 
-use std::path::Path;
-use windows::Win32::Foundation::HWND;
-use windows::Win32::System::Threading::{
-    OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_FORMAT, PROCESS_QUERY_LIMITED_INFORMATION,
-};
-use windows::Win32::UI::WindowsAndMessaging::{
-    GetClassNameW, GetWindow, GetWindowLongPtrW, GetWindowThreadProcessId, IsWindowVisible,
-    GWL_EXSTYLE, GWL_STYLE, GW_OWNER, WS_EX_TOOLWINDOW, WS_POPUP,
-};
+/// Process IDs that already had main windows when BGWM started (excluded from app routing).
+/// Includes windows on other virtual desktops (not visible from the current desktop).
+pub fn existing_main_window_pids() -> HashSet<u32> {
+    let mut pids = HashSet::new();
+    unsafe {
+        let lparam = LPARAM(&mut pids as *mut _ as isize);
+        let _ = EnumWindows(Some(collect_existing_main_pid), lparam);
+    }
+    pids
+}
 
-const MAIN_WINDOW_MIN_WIDTH: i32 = 100;
-const MAIN_WINDOW_MIN_HEIGHT: i32 = 100;
+/// Running process IDs whose executable matches a configured app rule.
+pub fn running_pids_for_executable(executable: &str) -> HashSet<u32> {
+    let mut pids = HashSet::new();
+    unsafe {
+        let Ok(snapshot) = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) else {
+            return pids;
+        };
+        if snapshot.is_invalid() {
+            return pids;
+        }
+
+        let mut entry = PROCESSENTRY32W {
+            dwSize: std::mem::size_of::<PROCESSENTRY32W>() as u32,
+            ..Default::default()
+        };
+
+        if Process32FirstW(snapshot, &mut entry).is_ok() {
+            loop {
+                let end = entry
+                    .szExeFile
+                    .iter()
+                    .position(|&c| c == 0)
+                    .unwrap_or(entry.szExeFile.len());
+                let name = String::from_utf16_lossy(&entry.szExeFile[..end]);
+                if matches_executable(executable, &name) {
+                    pids.insert(entry.th32ProcessID);
+                }
+                if Process32NextW(snapshot, &mut entry).is_err() {
+                    break;
+                }
+            }
+        }
+
+        let _ = CloseHandle(snapshot);
+    }
+    pids
+}
+
+struct EnumPidContext {
+    target_pid: u32,
+    found: bool,
+}
+
+pub fn process_has_main_window(pid: u32) -> bool {
+    let mut ctx = EnumPidContext {
+        target_pid: pid,
+        found: false,
+    };
+    unsafe {
+        let lparam = LPARAM(&mut ctx as *mut _ as isize);
+        let _ = EnumWindows(Some(enum_process_main_window), lparam);
+    }
+    ctx.found
+}
 
 pub fn executable_for_hwnd(hwnd: isize) -> Option<String> {
     let hwnd = HWND(hwnd as *mut _);
@@ -63,8 +134,15 @@ pub fn executable_for_hwnd(hwnd: isize) -> Option<String> {
 }
 
 pub fn is_main_window(hwnd: HWND) -> bool {
+    is_main_window_inner(hwnd, true)
+}
+
+fn is_main_window_inner(hwnd: HWND, require_visible: bool) -> bool {
     unsafe {
-        if hwnd.0.is_null() || !IsWindowVisible(hwnd).as_bool() {
+        if hwnd.0.is_null() {
+            return false;
+        }
+        if require_visible && !IsWindowVisible(hwnd).as_bool() {
             return false;
         }
 
@@ -118,6 +196,41 @@ fn normalize_exe_path(path: &str) -> String {
         .to_string()
 }
 
+unsafe extern "system" fn collect_existing_main_pid(hwnd: HWND, lparam: LPARAM) -> BOOL {
+    let pids = &mut *(lparam.0 as *mut HashSet<u32>);
+    if is_main_window_inner(hwnd, false) && !is_own_process_window(hwnd) {
+        if let Some(pid) = process_id_for_hwnd(hwnd.0 as isize) {
+            pids.insert(pid);
+        }
+    }
+    BOOL(1)
+}
+
+unsafe extern "system" fn enum_process_main_window(hwnd: HWND, lparam: LPARAM) -> BOOL {
+    let ctx = &mut *(lparam.0 as *mut EnumPidContext);
+    if ctx.found {
+        return BOOL(0);
+    }
+
+    if process_id_for_hwnd(hwnd.0 as isize) == Some(ctx.target_pid)
+        && is_main_window_inner(hwnd, false)
+        && !is_own_process_window(hwnd)
+    {
+        ctx.found = true;
+        return BOOL(0);
+    }
+
+    BOOL(1)
+}
+
+fn is_own_process_window(hwnd: HWND) -> bool {
+    unsafe {
+        let mut pid = 0u32;
+        GetWindowThreadProcessId(hwnd, Some(&mut pid));
+        pid == GetCurrentProcessId()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -128,5 +241,10 @@ mod tests {
             normalize_exe_path(r"C:\Program Files\Google\Chrome\Application\chrome.exe"),
             "chrome.exe"
         );
+    }
+
+    #[test]
+    fn existing_main_window_pids_does_not_panic() {
+        let _ = existing_main_window_pids();
     }
 }
