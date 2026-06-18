@@ -3,6 +3,8 @@ use tracing::debug;
 use windows::Win32::Foundation::HWND;
 use winvd::{DesktopEvent, DesktopEventThread};
 
+mod focus;
+
 pub const WORKSPACE_INDEX_BASE: u32 = 1;
 
 #[derive(Debug, Error)]
@@ -31,8 +33,35 @@ pub fn current_workspace_index() -> Result<u32, VirtualDesktopError> {
 }
 
 pub fn switch_to_workspace(index: u32) -> Result<(), VirtualDesktopError> {
+    switch_to_workspace_impl(index, None)
+}
+
+pub fn switch_to_workspace_focusing(
+    index: u32,
+    hwnd: isize,
+) -> Result<(), VirtualDesktopError> {
+    switch_to_workspace_impl(index, Some(hwnd))
+}
+
+pub fn on_desktop_changed() {
+    focus::restore_focus_after_desktop_change();
+}
+
+fn switch_to_workspace_impl(
+    index: u32,
+    preferred_focus: Option<isize>,
+) -> Result<(), VirtualDesktopError> {
     validate_index(index)?;
     let zero_based = index - WORKSPACE_INDEX_BASE;
+
+    if let Ok(current) = current_workspace_index() {
+        focus::remember_focused_workspace(current);
+    }
+    if let Some(hwnd) = preferred_focus {
+        focus::set_pending_focus(hwnd);
+    }
+
+    focus::allow_foreground_from_background();
     debug!("switching to workspace {index} (api index {zero_based})");
     winvd::switch_desktop(zero_based)?;
     Ok(())
@@ -47,9 +76,10 @@ pub fn move_window_to_workspace(hwnd: isize, index: u32) -> Result<(), VirtualDe
     Ok(())
 }
 
-pub fn move_focused_window_to_workspace(index: u32) -> Result<(), VirtualDesktopError> {
+pub fn move_focused_window_to_workspace(index: u32) -> Result<isize, VirtualDesktopError> {
     let hwnd = focused_hwnd().ok_or(VirtualDesktopError::NoFocusedWindow)?;
-    move_window_to_workspace(hwnd, index)
+    move_window_to_workspace(hwnd, index)?;
+    Ok(hwnd)
 }
 
 pub fn listen_events(

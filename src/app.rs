@@ -127,16 +127,23 @@ impl BgwmApp {
                 }
             }
             HotkeyAction::MoveWindowToWorkspace(ws) => {
-                if let Err(e) = virtual_desktop::move_focused_window_to_workspace(ws) {
-                    warn!("move window failed: {e}");
-                } else if let Err(e) = virtual_desktop::switch_to_workspace(ws) {
-                    warn!("switch after move failed: {e}");
+                match virtual_desktop::move_focused_window_to_workspace(ws) {
+                    Ok(hwnd) => {
+                        if let Err(e) = virtual_desktop::switch_to_workspace_focusing(ws, hwnd) {
+                            warn!("switch after move failed: {e}");
+                        }
+                    }
+                    Err(e) => warn!("move window failed: {e}"),
                 }
             }
         }
     }
 
     fn handle_desktop_event(&mut self, event: DesktopEvent) {
+        if matches!(event, DesktopEvent::DesktopChanged { .. }) {
+            virtual_desktop::on_desktop_changed();
+        }
+
         if let Some(ws) = virtual_desktop::workspace_index_from_event(&event) {
             self.current_workspace = ws;
             if let Some(tray) = &self.tray {
@@ -179,7 +186,9 @@ impl BgwmApp {
                 warn!("failed to move window for app rule: {e}");
                 continue;
             }
-            if let Err(e) = virtual_desktop::switch_to_workspace(rule.workspace) {
+            if let Err(e) =
+                virtual_desktop::switch_to_workspace_focusing(rule.workspace, hwnd)
+            {
                 warn!("failed to switch workspace for app rule: {e}");
             }
             break;
