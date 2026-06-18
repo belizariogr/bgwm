@@ -1,11 +1,11 @@
 use std::sync::{Arc, Mutex};
-use std::time::SystemTime;
+use std::time::{Duration, Instant, SystemTime};
 use tracing::{error, info, warn};
 use tray_icon::menu::MenuEvent;
 use tray_icon::TrayIconEvent;
 use winit::application::ApplicationHandler;
 use winit::event::WindowEvent as WinitWindowEvent;
-use winit::event_loop::{ActiveEventLoop, EventLoop, EventLoopProxy};
+use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop, EventLoopProxy};
 use winit::window::WindowId;
 use winvd::DesktopEvent;
 
@@ -21,6 +21,7 @@ pub enum UserEvent {
     Tray(TrayIconEvent),
     Menu(MenuEvent),
     Desktop(DesktopEvent),
+    Hotkey(HotkeyAction),
 }
 
 pub struct BgwmApp {
@@ -74,8 +75,14 @@ impl BgwmApp {
         let config = self.config.lock().expect("config poisoned").clone();
         let switch = config.switch_bindings().unwrap_or_default();
         let move_bindings = config.move_bindings().unwrap_or_default();
+        let Some(proxy) = self.proxy.clone() else {
+            error!("event loop proxy not set before hotkey init");
+            return;
+        };
 
-        match HotkeyEngine::start(switch, move_bindings) {
+        match HotkeyEngine::start(switch, move_bindings, move |action| {
+            let _ = proxy.send_event(UserEvent::Hotkey(action));
+        }) {
             Ok(engine) => self.hotkeys = Some(engine),
             Err(e) => error!("failed to start hotkey engine: {e}"),
         }
@@ -216,9 +223,8 @@ impl BgwmApp {
             }
         }
         for event in hotkey_events {
-            match event {
-                HotkeyEvent::Triggered(action) => self.handle_hotkey(action),
-                HotkeyEvent::HookError(msg) => error!("hotkey hook error: {msg}"),
+            if let HotkeyEvent::HookError(msg) = event {
+                error!("hotkey hook error: {msg}");
             }
         }
 
@@ -239,6 +245,13 @@ impl BgwmApp {
 impl ApplicationHandler<UserEvent> for BgwmApp {
     fn resumed(&mut self, _event_loop: &ActiveEventLoop) {}
 
+    fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+        self.poll_background();
+        event_loop.set_control_flow(ControlFlow::WaitUntil(
+            Instant::now() + Duration::from_millis(200),
+        ));
+    }
+
     fn new_events(&mut self, _event_loop: &ActiveEventLoop, cause: winit::event::StartCause) {
         if matches!(cause, winit::event::StartCause::Init) {
             self.init_services();
@@ -248,6 +261,7 @@ impl ApplicationHandler<UserEvent> for BgwmApp {
 
     fn user_event(&mut self, event_loop: &ActiveEventLoop, event: UserEvent) {
         match event {
+            UserEvent::Hotkey(action) => self.handle_hotkey(action),
             UserEvent::Tray(_event) => {}
             UserEvent::Menu(menu_event) => {
                 let id = menu_event.id;

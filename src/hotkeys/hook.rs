@@ -19,6 +19,8 @@ use crossbeam_channel::{Receiver, Sender};
 use std::collections::HashMap;
 use std::mem::size_of;
 use std::sync::{Arc, Mutex, OnceLock};
+
+type WakeFn = Arc<dyn Fn(HotkeyAction) + Send + Sync>;
 use std::thread::{self, JoinHandle};
 use thiserror::Error;
 use tracing::error;
@@ -83,6 +85,7 @@ struct HookState {
 
 static HOOK_STATE_GLOBAL: OnceLock<Arc<Mutex<HookState>>> = OnceLock::new();
 static HOOK_TX_GLOBAL: OnceLock<Sender<HotkeyEvent>> = OnceLock::new();
+static HOOK_WAKE_GLOBAL: OnceLock<WakeFn> = OnceLock::new();
 
 pub struct HotkeyEngine {
     state: Arc<Mutex<HookState>>,
@@ -94,6 +97,7 @@ impl HotkeyEngine {
     pub fn start(
         switch: Vec<(u32, Hotkey)>,
         r#move: Vec<(u32, Hotkey)>,
+        wake: impl Fn(HotkeyAction) + Send + Sync + 'static,
     ) -> Result<Self, HotkeyEngineError> {
         let (event_tx, event_rx) = crossbeam_channel::unbounded();
 
@@ -108,6 +112,7 @@ impl HotkeyEngine {
 
         HOOK_STATE_GLOBAL.set(Arc::clone(&state)).ok();
         HOOK_TX_GLOBAL.set(event_tx.clone()).ok();
+        HOOK_WAKE_GLOBAL.set(Arc::new(wake)).ok();
 
         let handle = thread::spawn(move || {
             if let Err(e) = run_hook_thread() {
@@ -152,10 +157,6 @@ fn run_hook_thread() -> Result<(), HotkeyEngineError> {
             Some(s) => s,
             None => return CallNextHookEx(None, code, wparam, lparam),
         };
-        let tx = match HOOK_TX_GLOBAL.get() {
-            Some(s) => s,
-            None => return CallNextHookEx(None, code, wparam, lparam),
-        };
 
         if code < 0 || code != HC_ACTION as i32 {
             return CallNextHookEx(None, code, wparam, lparam);
@@ -186,7 +187,7 @@ fn run_hook_thread() -> Result<(), HotkeyEngineError> {
         }
 
         if is_key_down {
-            if handle_key_down(state, tx, vk) {
+            if handle_key_down(state, vk) {
                 return LRESULT(1);
             }
             return CallNextHookEx(None, code, wparam, lparam);
@@ -254,11 +255,7 @@ fn handle_key_up(state: &Arc<Mutex<HookState>>, vk: VIRTUAL_KEY) -> bool {
     false
 }
 
-fn handle_key_down(
-    state: &Arc<Mutex<HookState>>,
-    tx: &Sender<HotkeyEvent>,
-    vk: VIRTUAL_KEY,
-) -> bool {
+fn handle_key_down(state: &Arc<Mutex<HookState>>, vk: VIRTUAL_KEY) -> bool {
     if is_win_key(vk) {
         let mut st = state.lock().expect("hook state poisoned");
         st.win_held = Some(vk);
@@ -306,7 +303,9 @@ fn handle_key_down(
         st.suppressed_key = Some(vk.0);
     }
 
-    let _ = tx.send(HotkeyEvent::Triggered(action));
+    if let Some(wake) = HOOK_WAKE_GLOBAL.get() {
+        wake(action);
+    }
     true
 }
 

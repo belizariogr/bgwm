@@ -27,7 +27,7 @@ Virtual desktop switching uses the [`winvd`](https://crates.io/crates/winvd) cra
 rustup default stable
 rustup target add x86_64-pc-windows-msvc
 
-git clone https://github.com/<owner>/bgwm.git
+git clone https://github.com/belizariogr/bgwm.git
 cd bgwm
 cargo build --release
 cargo run --release
