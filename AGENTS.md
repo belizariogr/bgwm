@@ -24,12 +24,13 @@ BGWM enhances Windows virtual desktops (workspaces) with configurable global hot
   - Implement via a low-level keyboard hook (`SetWindowsHookExW` / `WH_KEYBOARD_LL`) or equivalent, registering combos explicitly and passing through unregistered keys.
   - Take care to not lock Win hotkey.
 
-### 2. Tray icon — current workspace indicator
+### 2. Tray icon and App Icon — current workspace indicator
 
 - Show a system-tray icon reflecting the **active workspace index**.
 - Visual: a **number inside a rounded square** (e.g. workspace 3 → `3` in a rounded rect).
 - Update immediately on workspace change (listen for desktop switch events, not periodic polling).
 - Use the assets/tray/ref to get the numbers to show witch Workspace is currently being displayed. 
+- The app icon is saved in SVG format on assets/icon/bgwm.svg.
 
 ### 3. Tray context menu
 
