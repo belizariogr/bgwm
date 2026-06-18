@@ -1,0 +1,300 @@
+use std::sync::{Arc, Mutex};
+use std::time::SystemTime;
+use tracing::{error, info, warn};
+use tray_icon::menu::MenuEvent;
+use tray_icon::TrayIconEvent;
+use winit::application::ApplicationHandler;
+use winit::event::WindowEvent as WinitWindowEvent;
+use winit::event_loop::{ActiveEventLoop, EventLoop, EventLoopProxy};
+use winit::window::WindowId;
+use winvd::DesktopEvent;
+
+use crate::config::{self, matches_executable, Config};
+use crate::hotkeys::{HotkeyAction, HotkeyEngine, HotkeyEvent};
+use crate::settings;
+use crate::tray::{is_exit_menu, is_settings_menu, menu_workspace_from_id, TrayController};
+use crate::virtual_desktop::{self, WORKSPACE_INDEX_BASE};
+use crate::window_tracking::{AppWindowEvent, WindowWatcher};
+
+#[derive(Debug)]
+pub enum UserEvent {
+    Tray(TrayIconEvent),
+    Menu(MenuEvent),
+    Desktop(DesktopEvent),
+}
+
+pub struct BgwmApp {
+    config: Arc<Mutex<Config>>,
+    proxy: Option<EventLoopProxy<UserEvent>>,
+    last_config_mtime: Option<SystemTime>,
+    tray: Option<TrayController>,
+    hotkeys: Option<HotkeyEngine>,
+    _desktop_listener: Option<winvd::DesktopEventThread>,
+    window_watcher: Option<WindowWatcher>,
+    current_workspace: u32,
+    workspace_count: u32,
+}
+
+impl BgwmApp {
+    pub fn new(config: Config) -> Self {
+        Self {
+            config: Arc::new(Mutex::new(config)),
+            proxy: None,
+            last_config_mtime: None,
+            tray: None,
+            hotkeys: None,
+            _desktop_listener: None,
+            window_watcher: None,
+            current_workspace: WORKSPACE_INDEX_BASE,
+            workspace_count: WORKSPACE_INDEX_BASE,
+        }
+    }
+
+    pub fn prepare(&mut self, proxy: EventLoopProxy<UserEvent>) {
+        self.proxy = Some(proxy);
+    }
+
+    fn init_services(&mut self) {
+        self.workspace_count = virtual_desktop::workspace_count().unwrap_or(4);
+        self.current_workspace =
+            virtual_desktop::current_workspace_index().unwrap_or(WORKSPACE_INDEX_BASE);
+
+        match TrayController::new(self.workspace_count, self.current_workspace) {
+            Ok(tray) => self.tray = Some(tray),
+            Err(e) => error!("failed to create tray icon: {e}"),
+        }
+
+        self.start_hotkeys();
+        self.start_desktop_listener();
+        self.window_watcher = Some(WindowWatcher::start());
+        self.last_config_mtime = settings::config_mtime();
+    }
+
+    fn start_hotkeys(&mut self) {
+        let config = self.config.lock().expect("config poisoned").clone();
+        let switch = config.switch_bindings().unwrap_or_default();
+        let move_bindings = config.move_bindings().unwrap_or_default();
+
+        match HotkeyEngine::start(switch, move_bindings) {
+            Ok(engine) => self.hotkeys = Some(engine),
+            Err(e) => error!("failed to start hotkey engine: {e}"),
+        }
+    }
+
+    fn reload_hotkeys(&mut self) {
+        let config = self.config.lock().expect("config poisoned").clone();
+        if let Some(engine) = &self.hotkeys {
+            let switch = config.switch_bindings().unwrap_or_default();
+            let move_bindings = config.move_bindings().unwrap_or_default();
+            engine.update_bindings(switch, move_bindings);
+        } else {
+            self.start_hotkeys();
+        }
+    }
+
+    fn start_desktop_listener(&mut self) {
+        let Some(proxy) = self.proxy.clone() else {
+            error!("event loop proxy not set before desktop listener init");
+            return;
+        };
+
+        let (tx, rx) = crossbeam_channel::unbounded();
+        match virtual_desktop::listen_events(tx) {
+            Ok(listener) => {
+                self._desktop_listener = Some(listener);
+                std::thread::spawn(move || {
+                    while let Ok(event) = rx.recv() {
+                        let _ = proxy.send_event(UserEvent::Desktop(event));
+                    }
+                });
+            }
+            Err(e) => error!("failed to listen for desktop events: {e}"),
+        }
+    }
+
+    fn handle_hotkey(&mut self, action: HotkeyAction) {
+        match action {
+            HotkeyAction::SwitchWorkspace(ws) => {
+                if let Err(e) = virtual_desktop::switch_to_workspace(ws) {
+                    warn!("switch workspace failed: {e}");
+                }
+            }
+            HotkeyAction::MoveWindowToWorkspace(ws) => {
+                if let Err(e) = virtual_desktop::move_focused_window_to_workspace(ws) {
+                    warn!("move window failed: {e}");
+                } else if let Err(e) = virtual_desktop::switch_to_workspace(ws) {
+                    warn!("switch after move failed: {e}");
+                }
+            }
+        }
+    }
+
+    fn handle_desktop_event(&mut self, event: DesktopEvent) {
+        if let Some(ws) = virtual_desktop::workspace_index_from_event(&event) {
+            self.current_workspace = ws;
+            if let Some(tray) = &self.tray {
+                if let Err(e) = tray.set_workspace(ws) {
+                    warn!("failed to update tray icon: {e}");
+                }
+            }
+        }
+
+        if virtual_desktop::desktop_count_may_have_changed(&event) {
+            if let Ok(count) = virtual_desktop::workspace_count() {
+                self.workspace_count = count;
+                if let Some(tray) = &mut self.tray {
+                    let _ = tray.rebuild_menu(count, self.current_workspace);
+                }
+            }
+        }
+    }
+
+    fn handle_app_window_event(&mut self, event: AppWindowEvent) {
+        let AppWindowEvent::MainWindowShown { hwnd, executable } = event;
+        let rules = self
+            .config
+            .lock()
+            .expect("config poisoned")
+            .app_rules
+            .clone();
+
+        for rule in rules {
+            if !matches_executable(&rule.executable, &executable) {
+                continue;
+            }
+
+            info!(
+                "routing {executable} to workspace {} (hwnd {hwnd})",
+                rule.workspace
+            );
+
+            if let Err(e) = virtual_desktop::move_window_to_workspace(hwnd, rule.workspace) {
+                warn!("failed to move window for app rule: {e}");
+                continue;
+            }
+            if let Err(e) = virtual_desktop::switch_to_workspace(rule.workspace) {
+                warn!("failed to switch workspace for app rule: {e}");
+            }
+            break;
+        }
+    }
+
+    fn open_settings(&self) {
+        if let Err(e) = settings::spawn_settings_process() {
+            error!("failed to open settings window: {e}");
+        }
+    }
+
+    fn poll_config_reload(&mut self) {
+        let Some(mtime) = settings::config_mtime() else {
+            return;
+        };
+
+        if self.last_config_mtime.is_some_and(|prev| mtime <= prev) {
+            return;
+        }
+
+        self.last_config_mtime = Some(mtime);
+
+        match config::load() {
+            Ok(updated) => {
+                if let Ok(mut cfg) = self.config.lock() {
+                    *cfg = updated;
+                }
+                self.reload_hotkeys();
+                info!("config reloaded after settings save");
+            }
+            Err(e) => warn!("config reload failed: {e}"),
+        }
+    }
+
+    fn poll_background(&mut self) {
+        let mut hotkey_events = Vec::new();
+        if let Some(engine) = &self.hotkeys {
+            while let Ok(event) = engine.events().try_recv() {
+                hotkey_events.push(event);
+            }
+        }
+        for event in hotkey_events {
+            match event {
+                HotkeyEvent::Triggered(action) => self.handle_hotkey(action),
+                HotkeyEvent::HookError(msg) => error!("hotkey hook error: {msg}"),
+            }
+        }
+
+        let mut window_events = Vec::new();
+        if let Some(watcher) = &self.window_watcher {
+            while let Ok(event) = watcher.events().try_recv() {
+                window_events.push(event);
+            }
+        }
+        for event in window_events {
+            self.handle_app_window_event(event);
+        }
+
+        self.poll_config_reload();
+    }
+}
+
+impl ApplicationHandler<UserEvent> for BgwmApp {
+    fn resumed(&mut self, _event_loop: &ActiveEventLoop) {}
+
+    fn new_events(&mut self, _event_loop: &ActiveEventLoop, cause: winit::event::StartCause) {
+        if matches!(cause, winit::event::StartCause::Init) {
+            self.init_services();
+        }
+        self.poll_background();
+    }
+
+    fn user_event(&mut self, event_loop: &ActiveEventLoop, event: UserEvent) {
+        match event {
+            UserEvent::Tray(_event) => {}
+            UserEvent::Menu(menu_event) => {
+                let id = menu_event.id;
+                if is_exit_menu(&id) {
+                    event_loop.exit();
+                    return;
+                }
+                if is_settings_menu(&id) {
+                    self.open_settings();
+                    return;
+                }
+                if let Some(ws) = menu_workspace_from_id(&id) {
+                    if let Err(e) = virtual_desktop::switch_to_workspace(ws) {
+                        warn!("tray switch failed: {e}");
+                    }
+                }
+            }
+            UserEvent::Desktop(event) => self.handle_desktop_event(event),
+        }
+    }
+
+    fn window_event(
+        &mut self,
+        _event_loop: &ActiveEventLoop,
+        _window_id: WindowId,
+        _event: WinitWindowEvent,
+    ) {
+    }
+}
+
+pub fn run() -> Result<(), Box<dyn std::error::Error>> {
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("bgwm=info")),
+        )
+        .init();
+
+    info!("starting BGWM");
+
+    let config = config::load()?;
+    let event_loop = EventLoop::<UserEvent>::with_user_event().build()?;
+    let proxy = event_loop.create_proxy();
+    crate::tray::install_event_forwarders(proxy.clone());
+
+    let mut app = BgwmApp::new(config);
+    app.prepare(proxy);
+    event_loop.run_app(&mut app)?;
+    Ok(())
+}

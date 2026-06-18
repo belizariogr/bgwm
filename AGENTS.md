@@ -90,56 +90,56 @@ Update checkboxes as work completes. Do not mark done without implemented, revie
 
 #### Phase 0 — Project scaffold
 
-- [ ] Initialize Cargo workspace/binary (`bgwm` crate)
-- [ ] Add `README.md` with build/run instructions
-- [ ] Pin Rust toolchain (`rust-toolchain.toml`) and Windows target
-- [ ] CI: `cargo fmt --check`, `clippy`, `test` on Windows
+- [x] Initialize Cargo workspace/binary (`bgwm` crate)
+- [x] Add `README.md` with build/run instructions
+- [x] Pin Rust toolchain (`rust-toolchain.toml`) and Windows target
+- [x] CI: `cargo fmt --check`, `clippy`, `test` on Windows
 
 #### Phase 1 — Configuration and persistence
 
-- [ ] Config schema: workspace hotkeys, move-window hotkeys, app rules
-- [ ] Load/save config from user app data directory
-- [ ] Unit tests for config round-trip and validation
+- [x] Config schema: workspace hotkeys, move-window hotkeys, app rules
+- [x] Load/save config from user app data directory
+- [x] Unit tests for config round-trip and validation
 
 #### Phase 2 — Virtual desktop abstraction
 
-- [ ] Detect workspace count and current index
-- [ ] Switch to workspace by index
-- [ ] Move window to workspace by index
-- [ ] Subscribe to desktop change notifications (tray updates)
+- [x] Detect workspace count and current index
+- [x] Switch to workspace by index
+- [x] Move window to workspace by index
+- [x] Subscribe to desktop change notifications (tray updates)
 
 #### Phase 3 — Global hotkeys
 
-- [ ] Hotkey registration and parsing (including Super)
-- [ ] Low-level hook: suppress combo defaults, passthrough Super alone
-- [ ] Wire switch-workspace and move-window actions
-- [ ] Tests for hotkey string parse/normalize
+- [x] Hotkey registration and parsing (including Super)
+- [x] Low-level hook: suppress combo defaults, passthrough Super alone
+- [x] Wire switch-workspace and move-window actions
+- [x] Tests for hotkey string parse/normalize
 
 #### Phase 4 — System tray
 
-- [ ] Tray icon with dynamic workspace number (rounded square asset or programmatic)
-- [ ] Context menu: list workspaces and switch
-- [ ] Reflect current workspace on change
+- [x] Tray icon with dynamic workspace number (rounded square asset or programmatic)
+- [x] Context menu: list workspaces and switch
+- [x] Reflect current workspace on change
 
 #### Phase 5 — Settings UI
 
-- [ ] Window with tabs: **Hotkeys** and **App rules**
-- [ ] Hotkeys tab: enumerate desktops, assign per-workspace switch/move bindings
-- [ ] App rules tab: add/remove executable → workspace mappings
-- [ ] Apply/reload hotkeys without full restart where possible
+- [x] Window with tabs: **Hotkeys** and **App rules**
+- [x] Hotkeys tab: enumerate desktops, assign per-workspace switch/move bindings
+- [x] App rules tab: add/remove executable → workspace mappings
+- [x] Apply/reload hotkeys without full restart where possible
 
 #### Phase 6 — App launch routing
 
-- [ ] WinEvent (or equivalent) for new main windows
-- [ ] Match process executable against rules
-- [ ] Move window + switch workspace on match
-- [ ] Tests for rule matching logic
+- [x] WinEvent (or equivalent) for new main windows
+- [x] Match process executable against rules
+- [x] Move window + switch workspace on match
+- [x] Tests for rule matching logic
 
 #### Phase 7 — Polish and release
 
-- [ ] Logging (e.g. `tracing`) and error surfaces in UI
+- [x] Logging (e.g. `tracing`) and error surfaces in UI
 - [ ] Installer or portable build notes
-- [ ] Performance pass on hook callbacks
+- [x] Performance pass on hook callbacks
 - [ ] Full manual test pass on Windows 10 and 11
 
 ---
