@@ -192,6 +192,97 @@ fn format_hotkey(modifiers: &Modifiers, key_token: &str) -> String {
     parts.join("+")
 }
 
+pub struct HotkeyHelpEntry {
+    pub primary: &'static str,
+    pub aliases: &'static [&'static str],
+}
+
+pub struct HotkeyHelpSection {
+    pub title: &'static str,
+    pub entries: &'static [HotkeyHelpEntry],
+}
+
+pub fn hotkey_help_sections() -> &'static [HotkeyHelpSection] {
+    static SECTIONS: [HotkeyHelpSection; 3] = [
+        HotkeyHelpSection {
+            title: "Modifiers",
+            entries: &[
+                HotkeyHelpEntry {
+                    primary: "Ctrl",
+                    aliases: &["Control"],
+                },
+                HotkeyHelpEntry {
+                    primary: "Alt",
+                    aliases: &[],
+                },
+                HotkeyHelpEntry {
+                    primary: "Shift",
+                    aliases: &[],
+                },
+                HotkeyHelpEntry {
+                    primary: "Win",
+                    aliases: &["Super", "Meta", "Windows"],
+                },
+            ],
+        },
+        HotkeyHelpSection {
+            title: "Keys",
+            entries: &[
+                HotkeyHelpEntry {
+                    primary: "A–Z",
+                    aliases: &["single letter"],
+                },
+                HotkeyHelpEntry {
+                    primary: "0–9",
+                    aliases: &["single digit"],
+                },
+            ],
+        },
+        HotkeyHelpSection {
+            title: "Special keys",
+            entries: &[
+                HotkeyHelpEntry {
+                    primary: "F1–F12",
+                    aliases: &[],
+                },
+                HotkeyHelpEntry {
+                    primary: "Tab",
+                    aliases: &[],
+                },
+                HotkeyHelpEntry {
+                    primary: "Space",
+                    aliases: &[],
+                },
+                HotkeyHelpEntry {
+                    primary: "Enter",
+                    aliases: &["Return"],
+                },
+                HotkeyHelpEntry {
+                    primary: "Escape",
+                    aliases: &["Esc"],
+                },
+                HotkeyHelpEntry {
+                    primary: "Left",
+                    aliases: &[],
+                },
+                HotkeyHelpEntry {
+                    primary: "Right",
+                    aliases: &[],
+                },
+                HotkeyHelpEntry {
+                    primary: "Up",
+                    aliases: &[],
+                },
+                HotkeyHelpEntry {
+                    primary: "Down",
+                    aliases: &[],
+                },
+            ],
+        },
+    ];
+    &SECTIONS
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -216,6 +307,13 @@ mod tests {
     fn normalize_super_alias() {
         let hk = Hotkey::parse("Super+3").unwrap();
         assert!(hk.modifiers.win);
+    }
+
+    #[test]
+    fn hotkey_help_lists_special_keys() {
+        let sections = hotkey_help_sections();
+        assert_eq!(sections.len(), 3);
+        assert!(sections[2].entries.iter().any(|entry| entry.primary == "F1–F12"));
     }
 
     #[test]

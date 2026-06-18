@@ -4,6 +4,7 @@ use eframe::egui;
 use eframe::egui::{Color32, CornerRadius, Margin, RichText, Stroke, Vec2};
 
 use crate::config::{AppRule, Config, ConfigError, SettingsWindow};
+use crate::hotkeys::hotkey_help_sections;
 use crate::virtual_desktop::{self, WORKSPACE_INDEX_BASE};
 
 const ACCENT: Color32 = Color32::from_rgb(84, 192, 235);
@@ -119,9 +120,19 @@ impl SettingsApp {
                             });
 
                             ui.with_layout(egui::Layout::right_to_left(egui::Align::TOP), |ui| {
+                                if self.active_tab == SettingsTab::Hotkeys {
+                                    hotkey_help_popup(ui);
+                                }
+
                                 if let Some(err) = &self.error {
+                                    if self.active_tab == SettingsTab::Hotkeys {
+                                        ui.add_space(8.0);
+                                    }
                                     badge(ui, err.clone(), ERROR);
                                 } else if let Some(status) = &self.status {
+                                    if self.active_tab == SettingsTab::Hotkeys {
+                                        ui.add_space(8.0);
+                                    }
                                     badge(ui, status.clone(), SUCCESS);
                                 }
                             });
@@ -486,6 +497,75 @@ fn badge(ui: &mut egui::Ui, text: String, color: Color32) {
 
 fn column_header(text: &str) -> RichText {
     RichText::new(text).size(12.0).strong().color(TEXT_MUTED)
+}
+
+fn hotkey_help_button(ui: &mut egui::Ui) -> egui::Response {
+    ui.add(
+        egui::Button::new(RichText::new("?").size(15.0).strong().color(ACCENT))
+            .fill(SURFACE_ELEVATED)
+            .stroke(Stroke::new(1.0, ACCENT.gamma_multiply(0.5)))
+            .corner_radius(CornerRadius::same(14))
+            .min_size(Vec2::splat(28.0)),
+    )
+    .on_hover_text("Available hotkey tokens")
+}
+
+fn hotkey_help_popup(ui: &mut egui::Ui) {
+    let popup_id = ui.id().with("hotkey_help_popup");
+    let help_response = hotkey_help_button(ui);
+    if help_response.clicked() {
+        ui.memory_mut(|mem| mem.toggle_popup(popup_id));
+    }
+
+    egui::popup::popup_below_widget(
+        ui,
+        popup_id,
+        &help_response,
+        egui::PopupCloseBehavior::CloseOnClickOutside,
+        |ui| {
+            ui.set_min_width(360.0);
+            ui.label(
+                RichText::new("Hotkey reference")
+                    .size(15.0)
+                    .strong()
+                    .color(Color32::WHITE),
+            );
+            ui.add_space(4.0);
+            ui.label(
+                RichText::new("Combine tokens with +. Example: Win+Shift+2")
+                    .size(12.0)
+                    .color(TEXT_MUTED),
+            );
+            ui.add_space(10.0);
+            ui.separator();
+            ui.add_space(10.0);
+
+            for section in hotkey_help_sections() {
+                ui.label(
+                    RichText::new(section.title)
+                        .size(13.0)
+                        .strong()
+                        .color(ACCENT_MUTED),
+                );
+                ui.add_space(6.0);
+
+                for entry in section.entries {
+                    ui.horizontal(|ui| {
+                        ui.label(RichText::new(entry.primary).color(Color32::WHITE));
+                        if !entry.aliases.is_empty() {
+                            ui.label(
+                                RichText::new(format!("({})", entry.aliases.join(", ")))
+                                    .size(12.0)
+                                    .color(TEXT_MUTED),
+                            );
+                        }
+                    });
+                }
+
+                ui.add_space(10.0);
+            }
+        },
+    );
 }
 
 fn primary_button(ui: &mut egui::Ui, label: &str) -> egui::Response {
