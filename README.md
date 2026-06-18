@@ -47,6 +47,34 @@ Release binary:
 target\release\bgwm.exe
 ```
 
+## Installer (Inno Setup)
+
+Requires [Inno Setup 6](https://jrsoftware.org/isdl.php) on Windows.
+
+```powershell
+.\installer\build-installer.ps1
+```
+
+This builds a release binary and produces:
+
+```text
+dist\bgwm-setup-<version>.exe
+```
+
+The installer:
+
+- Installs `bgwm.exe` and tray assets under `%LOCALAPPDATA%\Programs\BGWM` (per-user) or `C:\Program Files\BGWM` (if elevated)
+- Registers an uninstaller in *Apps & features*
+- Offers optional desktop shortcut and launch after install
+- Removes the Windows startup registry entry on uninstall if it points at the installed copy
+
+Manual build (without the script):
+
+```powershell
+cargo build --release
+& "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" /DMyAppVersion=0.1.0 installer\bgwm.iss
+```
+
 ## Configuration
 
 Settings are stored at:

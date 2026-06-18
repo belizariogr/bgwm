@@ -256,6 +256,14 @@ fn load_rgba_from_png(path: &PathBuf) -> Result<RgbaIcon, tray_icon::Error> {
 }
 
 fn assets_dir() -> PathBuf {
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            let bundled = dir.join("assets");
+            if bundled.join("tray").join("ref").join("border.png").is_file() {
+                return bundled;
+            }
+        }
+    }
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("assets")
 }
 

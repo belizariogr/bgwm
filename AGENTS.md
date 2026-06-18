@@ -138,7 +138,7 @@ Update checkboxes as work completes. Do not mark done without implemented, revie
 #### Phase 7 — Polish and release
 
 - [x] Logging (e.g. `tracing`) and error surfaces in UI
-- [ ] Installer or portable build notes
+- [x] Installer or portable build notes
 - [x] Performance pass on hook callbacks
 - [ ] Full manual test pass on Windows 10 and 11
 
