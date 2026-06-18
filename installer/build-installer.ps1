@@ -14,6 +14,11 @@ function Get-AppVersion {
 }
 
 function Find-InnoSetupCompiler {
+    $fromPath = Get-Command ISCC.exe -ErrorAction SilentlyContinue
+    if ($fromPath) {
+        return $fromPath.Source
+    }
+
     $candidates = @(
         "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe",
         "${env:ProgramFiles}\Inno Setup 6\ISCC.exe"
@@ -27,7 +32,7 @@ function Find-InnoSetupCompiler {
 Inno Setup 6 not found.
 
 Install from: https://jrsoftware.org/isdl.php
-Expected ISCC.exe in Program Files (x86)\Inno Setup 6\
+Expected ISCC.exe on PATH or in Program Files\Inno Setup 6\
 "@
 }
 

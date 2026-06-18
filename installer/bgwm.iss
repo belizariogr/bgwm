@@ -12,7 +12,8 @@
 #define MyAppDescription "Better Windows Workspaces Manager"
 #define ReleaseBinary AddBackslash(SourcePath) + "..\target\release\" + MyAppExeName
 
-#if not FileExists(ReleaseBinary)
+#if FileExists(ReleaseBinary)
+#else
   #error "Release binary not found. Run: cargo build --release (or installer\build-installer.ps1)"
 #endif
 

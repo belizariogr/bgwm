@@ -3,6 +3,12 @@ setlocal enabledelayedexpansion
 
 cd /d "%~dp0"
 
+if /i "%~1"=="installer" (
+    echo [BGWM] Building installer...
+    powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0installer\build-installer.ps1"
+    exit /b %ERRORLEVEL%
+)
+
 set "BUILD_FLAG="
 set "EXE_PATH=target\debug\bgwm.exe"
 

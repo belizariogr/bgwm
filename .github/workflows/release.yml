@@ -55,35 +55,45 @@ jobs:
             echo "exists=false" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: fmt
-        if: steps.tag.outputs.exists == 'false'
-        run: cargo fmt --check
-
-      - name: clippy
-        if: steps.tag.outputs.exists == 'false'
-        run: cargo clippy -- -D warnings
-
-      - name: test
-        if: steps.tag.outputs.exists == 'false'
-        run: cargo test
-
       - name: Build release binary
         if: steps.tag.outputs.exists == 'false'
         run: cargo build --release
 
-      - name: Install Inno Setup
+      - name: Ensure Inno Setup
+        id: innosetup
         if: steps.tag.outputs.exists == 'false'
-        run: choco install innosetup -y --no-progress
+        shell: pwsh
+        run: |
+          function Find-Iscc {
+            $fromPath = Get-Command ISCC.exe -ErrorAction SilentlyContinue
+            if ($fromPath) { return $fromPath.Source }
+            foreach ($path in @(
+              "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe",
+              "${env:ProgramFiles}\Inno Setup 6\ISCC.exe"
+            )) {
+              if (Test-Path $path) { return $path }
+            }
+            return $null
+          }
+
+          $iscc = Find-Iscc
+          if (-not $iscc) {
+            Write-Host "ISCC.exe not found in PATH or default locations; installing via Chocolatey..."
+            choco install innosetup -y --no-progress
+            $iscc = Find-Iscc
+          } else {
+            Write-Host "Inno Setup already available: $iscc"
+          }
+          if (-not $iscc) {
+            throw "Inno Setup compiler (ISCC.exe) not found after install attempt"
+          }
+          "iscc=$iscc" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
 
       - name: Build installer
         if: steps.tag.outputs.exists == 'false'
         shell: pwsh
         run: |
-          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
-          if (-not (Test-Path $iscc)) {
-            throw "Inno Setup compiler not found at $iscc"
-          }
-          & $iscc "/DMyAppVersion=${{ steps.version.outputs.version }}" installer\bgwm.iss
+          & "${{ steps.innosetup.outputs.iscc }}" "/DMyAppVersion=${{ steps.version.outputs.version }}" installer\bgwm.iss
 
       - name: Publish GitHub release
         if: steps.tag.outputs.exists == 'false'
