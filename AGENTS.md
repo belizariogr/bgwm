@@ -22,12 +22,14 @@ BGWM enhances Windows virtual desktops (workspaces) with configurable global hot
   - When a registered hotkey uses Super (e.g. `Win+E`), only that combo is intercepted; the default OS action for that combo is suppressed (Explorer does not open).
   - Pressing **Super alone** must still open the Start menu normally.
   - Implement via a low-level keyboard hook (`SetWindowsHookExW` / `WH_KEYBOARD_LL`) or equivalent, registering combos explicitly and passing through unregistered keys.
+  - Take care to not lock Win hotkey.
 
 ### 2. Tray icon — current workspace indicator
 
 - Show a system-tray icon reflecting the **active workspace index**.
 - Visual: a **number inside a rounded square** (e.g. workspace 3 → `3` in a rounded rect).
 - Update immediately on workspace change (listen for desktop switch events, not periodic polling).
+- Use the assets/tray/ref to get the numbers to show witch Workspace is currently being displayed. 
 
 ### 3. Tray context menu
 
@@ -86,46 +88,54 @@ BGWM enhances Windows virtual desktops (workspaces) with configurable global hot
 Update checkboxes as work completes. Do not mark done without implemented, reviewable code.
 
 #### Phase 0 — Project scaffold
+
 - [ ] Initialize Cargo workspace/binary (`bgwm` crate)
 - [ ] Add `README.md` with build/run instructions
 - [ ] Pin Rust toolchain (`rust-toolchain.toml`) and Windows target
 - [ ] CI: `cargo fmt --check`, `clippy`, `test` on Windows
 
 #### Phase 1 — Configuration and persistence
+
 - [ ] Config schema: workspace hotkeys, move-window hotkeys, app rules
 - [ ] Load/save config from user app data directory
 - [ ] Unit tests for config round-trip and validation
 
 #### Phase 2 — Virtual desktop abstraction
+
 - [ ] Detect workspace count and current index
 - [ ] Switch to workspace by index
 - [ ] Move window to workspace by index
 - [ ] Subscribe to desktop change notifications (tray updates)
 
 #### Phase 3 — Global hotkeys
+
 - [ ] Hotkey registration and parsing (including Super)
 - [ ] Low-level hook: suppress combo defaults, passthrough Super alone
 - [ ] Wire switch-workspace and move-window actions
 - [ ] Tests for hotkey string parse/normalize
 
 #### Phase 4 — System tray
+
 - [ ] Tray icon with dynamic workspace number (rounded square asset or programmatic)
 - [ ] Context menu: list workspaces and switch
 - [ ] Reflect current workspace on change
 
 #### Phase 5 — Settings UI
+
 - [ ] Window with tabs: **Hotkeys** and **App rules**
 - [ ] Hotkeys tab: enumerate desktops, assign per-workspace switch/move bindings
 - [ ] App rules tab: add/remove executable → workspace mappings
 - [ ] Apply/reload hotkeys without full restart where possible
 
 #### Phase 6 — App launch routing
+
 - [ ] WinEvent (or equivalent) for new main windows
 - [ ] Match process executable against rules
 - [ ] Move window + switch workspace on match
 - [ ] Tests for rule matching logic
 
 #### Phase 7 — Polish and release
+
 - [ ] Logging (e.g. `tracing`) and error surfaces in UI
 - [ ] Installer or portable build notes
 - [ ] Performance pass on hook callbacks
@@ -152,14 +162,16 @@ bgwm/
 
 **Likely dependencies (evaluate and adjust):**
 
-| Area | Crates / APIs |
-|------|----------------|
-| Windows FFI | `windows` crate |
-| Tray | `tray-icon`, or raw `Shell_NotifyIcon` |
-| UI | `egui` + `eframe`, or `windows-rs` dialogs for minimal UI |
-| Config | `serde`, `serde_json` or `toml` |
-| Logging | `tracing`, `tracing-subscriber` |
-| Async / threading | `crossbeam-channel` for hook → worker messages |
+
+| Area              | Crates / APIs                                             |
+| ----------------- | --------------------------------------------------------- |
+| Windows FFI       | `windows` crate                                           |
+| Tray              | `tray-icon`, or raw `Shell_NotifyIcon`                    |
+| UI                | `egui` + `eframe`, or `windows-rs` dialogs for minimal UI |
+| Config            | `serde`, `serde_json` or `toml`                           |
+| Logging           | `tracing`, `tracing-subscriber`                           |
+| Async / threading | `crossbeam-channel` for hook → worker messages            |
+
 
 Avoid unnecessary async runtime if a single-threaded Win32 message loop suffices.
 
@@ -214,15 +226,17 @@ cargo test
 
 ## Key Behavioral Examples
 
-| Action | Expected behavior |
-|--------|-------------------|
-| `Win+2` (configured) | Switch to Workspace 2; Start menu does not open |
-| `Win` alone | Start menu opens (not intercepted) |
-| `Win+E` (not configured) | Default OS behavior (Explorer) |
-| `Win+E` (registered to switch) | Switch workspace; Explorer does not open |
-| Launch `chrome.exe` (rule: WS 1) | Main window moves to WS 1; desktop switches to WS 1 |
-| `Win+Shift+6` (move binding) | Focused window → WS 6; activate WS 6 |
-| Tray shows `4` | User is on Workspace 4 (1-based or 0-based — pick one, document in UI) |
+
+| Action                           | Expected behavior                                                      |
+| -------------------------------- | ---------------------------------------------------------------------- |
+| `Win+2` (configured)             | Switch to Workspace 2; Start menu does not open                        |
+| `Win` alone                      | Start menu opens (not intercepted)                                     |
+| `Win+E` (not configured)         | Default OS behavior (Explorer)                                         |
+| `Win+E` (registered to switch)   | Switch workspace; Explorer does not open                               |
+| Launch `chrome.exe` (rule: WS 1) | Main window moves to WS 1; desktop switches to WS 1                    |
+| `Win+Shift+6` (move binding)     | Focused window → WS 6; activate WS 6                                   |
+| Tray shows `4`                   | User is on Workspace 4 (1-based or 0-based — pick one, document in UI) |
+
 
 Document index base (0 vs 1) in UI labels consistently.
 
@@ -242,3 +256,4 @@ Document index base (0 vs 1) in UI labels consistently.
 - **Workspace:** Windows virtual desktop (not VS Code / IDE workspace).
 - **Super / Win key:** Left or right Windows logo key.
 - **Main window:** Primary top-level HWND for an app (exclude tooltips, splash-only windows where detectable).
+
