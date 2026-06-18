@@ -7,12 +7,18 @@ use crate::config::{AppRule, Config, ConfigError, SettingsWindow};
 use crate::hotkeys::hotkey_help_sections;
 use crate::process_job::ChildProcessJob;
 use crate::virtual_desktop::{self, WORKSPACE_INDEX_BASE};
-use windows::Win32::Foundation::{CloseHandle, GetLastError, ERROR_ALREADY_EXISTS, HANDLE};
-use windows::Win32::System::Threading::CreateMutexW;
+use windows::Win32::UI::WindowsAndMessaging::FindWindowW;
 use windows::core::PCWSTR;
 
 pub const SETTINGS_WINDOW_TITLE: &str = "BGWM Settings";
-const SETTINGS_INSTANCE_MUTEX: &str = "Local\\bgwm-settings";
+const APP_RULE_WORKSPACE_WIDTH: f32 = 80.0;
+const APP_RULE_REMOVE_WIDTH: f32 = 72.0;
+const APP_RULE_BROWSE_WIDTH: f32 = 32.0;
+const APP_RULE_ROW_COLUMNS: f32 = 4.0;
+const APP_RULE_TEXT_FIELD_TOP_PADDING: f32 = 8.0;
+const EXECUTABLE_PICKER_POPUP_WIDTH: f32 = 250.0;
+
+mod executable_picker;
 
 const ACCENT: Color32 = Color32::from_rgb(84, 192, 235);
 const ACCENT_MUTED: Color32 = Color32::from_rgb(76, 219, 196);
@@ -29,6 +35,12 @@ enum SettingsTab {
     AppRules,
 }
 
+#[derive(Debug, Clone)]
+enum ExecutablePickerAction {
+    OpenWindowList,
+    SelectedExecutable(String),
+}
+
 pub struct SettingsApp {
     config: Config,
     workspace_count: u32,
@@ -36,6 +48,8 @@ pub struct SettingsApp {
     status: Option<String>,
     error: Option<String>,
     last_window_size: egui::Vec2,
+    window_picker_rule: Option<usize>,
+    pickable_windows: Vec<executable_picker::PickableWindow>,
 }
 
 impl SettingsApp {
@@ -50,6 +64,8 @@ impl SettingsApp {
             status: None,
             error: None,
             last_window_size,
+            window_picker_rule: None,
+            pickable_windows: Vec::new(),
         }
     }
 }
@@ -83,6 +99,8 @@ impl eframe::App for SettingsApp {
                             });
                     });
             });
+
+        self.draw_window_picker(ctx);
     }
 
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
@@ -278,44 +296,86 @@ impl SettingsApp {
                         ui.add_space(12.0);
                     });
                 } else {
-                    ui.horizontal(|ui| {
-                        let field_width = (ui.available_width() - 180.0).max(360.0);
-                        ui.add_sized(
-                            [field_width, ui.spacing().interact_size.y],
-                            egui::Label::new(column_header("Executable")),
-                        );
-                        ui.label(column_header("Workspace"));
-                    });
-                    ui.add_space(6.0);
+                    let row_width = ui.available_width();
+                    let item_spacing = ui.spacing().item_spacing.x;
+                    let row_height = ui.spacing().interact_size.y;
+                    let field_width = app_rule_executable_width(row_width, item_spacing);
+                    let browse_size = Vec2::new(APP_RULE_BROWSE_WIDTH, row_height);
 
                     let mut remove_idx = None;
-                    for (idx, rule) in self.config.app_rules.iter_mut().enumerate() {
-                        ui.horizontal(|ui| {
-                            let field_width = (ui.available_width() - 180.0).max(360.0);
-                            ui.add(
-                                egui::TextEdit::singleline(&mut rule.executable)
-                                    .desired_width(field_width)
-                                    .hint_text("chrome.exe"),
+                    let mut picker_actions = Vec::new();
+
+                    egui::Grid::new("app_rules_grid")
+                        .num_columns(4)
+                        .spacing([item_spacing, 4.0])
+                        .show(ui, |ui| {
+                            ui.add_sized(
+                                [field_width, row_height],
+                                egui::Label::new(column_header("Executable")),
                             );
-                            ui.add(
-                                egui::DragValue::new(&mut rule.workspace)
-                                    .range(WORKSPACE_INDEX_BASE..=99)
-                                    .prefix("WS "),
+                            ui.add_sized([APP_RULE_BROWSE_WIDTH, row_height], egui::Label::new(""));
+                            ui.add_sized(
+                                [APP_RULE_WORKSPACE_WIDTH, row_height],
+                                egui::Label::new(column_header("Workspace")),
                             );
-                            if ui
-                                .add(
-                                    egui::Button::new(
-                                        RichText::new("Remove").size(12.0).color(ERROR),
+                            ui.add_sized([APP_RULE_REMOVE_WIDTH, row_height], egui::Label::new(""));
+                            ui.end_row();
+
+                            for (idx, rule) in self.config.app_rules.iter_mut().enumerate() {
+                                ui.allocate_ui_with_layout(
+                                    Vec2::new(field_width, row_height),
+                                    egui::Layout::top_down(egui::Align::Min),
+                                    |ui| {
+                                        ui.add_space(APP_RULE_TEXT_FIELD_TOP_PADDING);
+                                        ui.add_sized(
+                                            [
+                                                ui.available_width(),
+                                                (row_height - APP_RULE_TEXT_FIELD_TOP_PADDING)
+                                                    .max(ui.spacing().interact_size.y),
+                                            ],
+                                            egui::TextEdit::singleline(&mut rule.executable)
+                                                .hint_text("chrome.exe"),
+                                        );
+                                    },
+                                );
+                                if let Some(action) = executable_picker_button(ui, idx, browse_size)
+                                {
+                                    picker_actions.push((idx, action));
+                                }
+                                ui.add_sized(
+                                    [APP_RULE_WORKSPACE_WIDTH, row_height],
+                                    egui::DragValue::new(&mut rule.workspace)
+                                        .range(WORKSPACE_INDEX_BASE..=99)
+                                        .prefix("WS "),
+                                );
+                                if ui
+                                    .add_sized(
+                                        [APP_RULE_REMOVE_WIDTH, row_height],
+                                        egui::Button::new(
+                                            RichText::new("Remove").size(12.0).color(ERROR),
+                                        )
+                                        .fill(Color32::TRANSPARENT)
+                                        .stroke(Stroke::new(1.0, BORDER)),
                                     )
-                                    .fill(Color32::TRANSPARENT)
-                                    .stroke(Stroke::new(1.0, BORDER)),
-                                )
-                                .clicked()
-                            {
-                                remove_idx = Some(idx);
+                                    .clicked()
+                                {
+                                    remove_idx = Some(idx);
+                                }
+                                ui.end_row();
                             }
                         });
-                        ui.add_space(4.0);
+
+                    for (idx, action) in picker_actions {
+                        match action {
+                            ExecutablePickerAction::OpenWindowList => {
+                                self.pickable_windows =
+                                    executable_picker::list_pickable_windows();
+                                self.window_picker_rule = Some(idx);
+                            }
+                            ExecutablePickerAction::SelectedExecutable(exe) => {
+                                self.config.app_rules[idx].executable = exe;
+                            }
+                        }
                     }
 
                     if let Some(idx) = remove_idx {
@@ -343,6 +403,66 @@ impl SettingsApp {
                 });
             },
         );
+    }
+
+    fn draw_window_picker(&mut self, ctx: &egui::Context) {
+        let Some(rule_idx) = self.window_picker_rule else {
+            return;
+        };
+
+        let mut open = true;
+        let mut selected_executable = None;
+        let mut cancel = false;
+        let windows = self.pickable_windows.clone();
+        egui::Window::new("Select window")
+            .open(&mut open)
+            .collapsible(false)
+            .resizable(true)
+            .default_size([520.0, 420.0])
+            .show(ctx, |ui| {
+                ui.label(
+                    RichText::new("Choose a window to use its executable name.")
+                        .color(TEXT_MUTED),
+                );
+                ui.add_space(8.0);
+
+                if windows.is_empty() {
+                    ui.label(
+                        RichText::new("No suitable windows found.")
+                            .color(TEXT_MUTED),
+                    );
+                } else {
+                    egui::ScrollArea::vertical()
+                        .auto_shrink([false; 2])
+                        .show(ui, |ui| {
+                            for window in windows {
+                                let label = format!("{} — {}", window.title, window.executable);
+                                if ui.selectable_label(false, label).clicked() {
+                                    selected_executable = Some(window.executable);
+                                }
+                            }
+                        });
+                }
+
+                ui.add_space(8.0);
+                if ui
+                    .add(
+                        egui::Button::new(RichText::new("Cancel").color(Color32::WHITE))
+                            .fill(SURFACE_ELEVATED)
+                            .stroke(Stroke::new(1.0, BORDER)),
+                    )
+                    .clicked()
+                {
+                    cancel = true;
+                }
+            });
+
+        if let Some(exe) = selected_executable {
+            self.config.app_rules[rule_idx].executable = exe;
+            self.window_picker_rule = None;
+        } else if cancel || !open {
+            self.window_picker_rule = None;
+        }
     }
 
     fn draw_footer(&mut self, ctx: &egui::Context) {
@@ -506,6 +626,54 @@ fn column_header(text: &str) -> RichText {
     RichText::new(text).size(12.0).strong().color(TEXT_MUTED)
 }
 
+fn app_rule_executable_width(row_width: f32, item_spacing: f32) -> f32 {
+    let fixed = APP_RULE_BROWSE_WIDTH
+        + APP_RULE_WORKSPACE_WIDTH
+        + APP_RULE_REMOVE_WIDTH
+        + item_spacing * (APP_RULE_ROW_COLUMNS - 1.0);
+    (row_width - fixed).max(120.0)
+}
+
+fn executable_picker_button(
+    ui: &mut egui::Ui,
+    rule_idx: usize,
+    size: Vec2,
+) -> Option<ExecutablePickerAction> {
+    let popup_id = ui.id().with(("exe_picker", rule_idx));
+    let response = ui
+        .add_sized(
+            size,
+            egui::Button::new(RichText::new("…").size(16.0).color(ACCENT))
+                .fill(SURFACE_ELEVATED)
+                .stroke(Stroke::new(1.0, BORDER)),
+        )
+        .on_hover_text("Select executable");
+
+    if response.clicked() {
+        ui.memory_mut(|mem| mem.toggle_popup(popup_id));
+    }
+
+    let mut action = None;
+    egui::popup::popup_below_widget(
+        ui,
+        popup_id,
+        &response,
+        egui::PopupCloseBehavior::CloseOnClick,
+        |ui| {
+            ui.set_min_width(EXECUTABLE_PICKER_POPUP_WIDTH);
+            if ui.button("Select window").clicked() {
+                action = Some(ExecutablePickerAction::OpenWindowList);
+            }
+            if ui.button("Select executable…").clicked() {
+                if let Some(exe) = executable_picker::pick_executable_file() {
+                    action = Some(ExecutablePickerAction::SelectedExecutable(exe));
+                }
+            }
+        },
+    );
+    action
+}
+
 fn hotkey_help_button(ui: &mut egui::Ui) -> egui::Response {
     ui.add(
         egui::Button::new(RichText::new("?").size(15.0).strong().color(ACCENT))
@@ -591,6 +759,18 @@ fn secondary_button(ui: &mut egui::Ui, label: &str) -> egui::Response {
     )
 }
 
+fn load_app_icon() -> Option<egui::IconData> {
+    let bytes = include_bytes!("../../assets/icon/bgwm.ico");
+    let image = image::load_from_memory(bytes).ok()?;
+    let rgba = image.to_rgba8();
+    let (width, height) = rgba.dimensions();
+    Some(egui::IconData {
+        rgba: rgba.into_raw(),
+        width,
+        height,
+    })
+}
+
 fn persist_settings_window_size(size: egui::Vec2) {
     if size.x < 1.0 || size.y < 1.0 {
         return;
@@ -620,10 +800,10 @@ pub fn run_standalone() -> Result<(), eframe::Error> {
         )
         .init();
 
-    let Some(_instance_lock) = acquire_settings_instance_lock() else {
+    if settings_window_is_open() {
         focus_settings_window();
         return Ok(());
-    };
+    }
 
     let config = crate::config::load().map_err(|e| {
         eframe::Error::AppCreation(Box::new(std::io::Error::new(
@@ -632,13 +812,18 @@ pub fn run_standalone() -> Result<(), eframe::Error> {
         )))
     })?;
 
+    let mut viewport = egui::ViewportBuilder::default()
+        .with_inner_size([
+            config.settings_window.width,
+            config.settings_window.height,
+        ])
+        .with_title(SETTINGS_WINDOW_TITLE);
+    if let Some(icon) = load_app_icon() {
+        viewport = viewport.with_icon(icon);
+    }
+
     let native_options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default()
-            .with_inner_size([
-                config.settings_window.width,
-                config.settings_window.height,
-            ])
-            .with_title(SETTINGS_WINDOW_TITLE),
+        viewport,
         ..Default::default()
     };
 
@@ -652,30 +837,16 @@ pub fn run_standalone() -> Result<(), eframe::Error> {
     )
 }
 
-struct SettingsInstanceLock {
-    handle: HANDLE,
-}
-
-impl Drop for SettingsInstanceLock {
-    fn drop(&mut self) {
-        unsafe {
-            let _ = CloseHandle(self.handle);
-        }
-    }
-}
-
-fn acquire_settings_instance_lock() -> Option<SettingsInstanceLock> {
+pub fn settings_window_is_open() -> bool {
     unsafe {
-        let name: Vec<u16> = SETTINGS_INSTANCE_MUTEX
+        let title: Vec<u16> = SETTINGS_WINDOW_TITLE
             .encode_utf16()
             .chain(std::iter::once(0))
             .collect();
-        let handle = CreateMutexW(None, true, PCWSTR(name.as_ptr())).ok()?;
-        if GetLastError() == ERROR_ALREADY_EXISTS {
-            let _ = CloseHandle(handle);
-            return None;
-        }
-        Some(SettingsInstanceLock { handle })
+        matches!(
+            FindWindowW(None, PCWSTR(title.as_ptr())),
+            Ok(hwnd) if !hwnd.0.is_null()
+        )
     }
 }
 
@@ -683,17 +854,44 @@ pub fn focus_settings_window() -> bool {
     virtual_desktop::focus_window_by_title(SETTINGS_WINDOW_TITLE)
 }
 
-pub fn open_settings(job: &ChildProcessJob) -> Result<(), std::io::Error> {
-    if focus_settings_window() {
-        return Ok(());
+fn settings_process_running(child: &mut Option<std::process::Child>) -> bool {
+    let Some(process) = child else {
+        return false;
+    };
+
+    match process.try_wait() {
+        Ok(None) => true,
+        Ok(Some(_)) | Err(_) => {
+            *child = None;
+            false
+        }
     }
-    spawn_settings_process(job)
 }
 
-pub fn spawn_settings_process(job: &ChildProcessJob) -> Result<(), std::io::Error> {
+pub fn open_settings(
+    job: &ChildProcessJob,
+    settings_child: &mut Option<std::process::Child>,
+) -> Result<(), std::io::Error> {
+    if settings_window_is_open() {
+        focus_settings_window();
+        return Ok(());
+    }
+
+    if settings_process_running(settings_child) {
+        return Ok(());
+    }
+
+    spawn_settings_process(job, settings_child)
+}
+
+pub fn spawn_settings_process(
+    job: &ChildProcessJob,
+    settings_child: &mut Option<std::process::Child>,
+) -> Result<(), std::io::Error> {
     let exe = std::env::current_exe()?;
     let child = std::process::Command::new(exe).arg("--settings").spawn()?;
     job.assign_child(&child);
+    *settings_child = Some(child);
     Ok(())
 }
 

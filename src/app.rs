@@ -62,6 +62,7 @@ pub struct BgwmApp {
     current_workspace: u32,
     workspace_count: u32,
     child_job: Option<ChildProcessJob>,
+    settings_child: Option<std::process::Child>,
 }
 
 impl BgwmApp {
@@ -80,6 +81,7 @@ impl BgwmApp {
             current_workspace: WORKSPACE_INDEX_BASE,
             workspace_count: WORKSPACE_INDEX_BASE,
             child_job: None,
+            settings_child: None,
         }
     }
 
@@ -329,7 +331,7 @@ impl BgwmApp {
             error!("child process job not initialized");
             return;
         };
-        if let Err(e) = settings::open_settings(job) {
+        if let Err(e) = settings::open_settings(job, &mut self.settings_child) {
             error!("failed to open settings window: {e}");
         }
     }
@@ -388,6 +390,18 @@ impl BgwmApp {
 
         self.poll_pending_app_routes();
         self.poll_config_reload();
+        self.refresh_settings_child();
+    }
+
+    fn refresh_settings_child(&mut self) {
+        let Some(child) = &mut self.settings_child else {
+            return;
+        };
+
+        match child.try_wait() {
+            Ok(None) => {}
+            Ok(Some(_)) | Err(_) => self.settings_child = None,
+        }
     }
 }
 
