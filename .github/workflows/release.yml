@@ -1,0 +1,95 @@
+name: Release
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Read version
+        id: version
+        shell: pwsh
+        run: |
+          $match = Select-String -Path Cargo.toml -Pattern '^\s*version\s*=\s*"(.+)"\s*$' | Select-Object -First 1
+          if (-not $match) {
+            throw "Could not read package version from Cargo.toml"
+          }
+          $version = $match.Matches.Groups[1].Value
+          "version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          "tag=v$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+
+      - name: Skip if tag already exists
+        id: tag
+        shell: bash
+        run: |
+          if git rev-parse "${{ steps.version.outputs.tag }}"^{commit} >/dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "Tag ${{ steps.version.outputs.tag }} already exists; skipping release."
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: fmt
+        if: steps.tag.outputs.exists == 'false'
+        run: cargo fmt --check
+
+      - name: clippy
+        if: steps.tag.outputs.exists == 'false'
+        run: cargo clippy -- -D warnings
+
+      - name: test
+        if: steps.tag.outputs.exists == 'false'
+        run: cargo test
+
+      - name: Build release binary
+        if: steps.tag.outputs.exists == 'false'
+        run: cargo build --release
+
+      - name: Install Inno Setup
+        if: steps.tag.outputs.exists == 'false'
+        run: choco install innosetup -y --no-progress
+
+      - name: Build installer
+        if: steps.tag.outputs.exists == 'false'
+        shell: pwsh
+        run: |
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) {
+            throw "Inno Setup compiler not found at $iscc"
+          }
+          & $iscc "/DMyAppVersion=${{ steps.version.outputs.version }}" installer\bgwm.iss
+
+      - name: Publish GitHub release
+        if: steps.tag.outputs.exists == 'false'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.tag }}
+          name: BGWM ${{ steps.version.outputs.tag }}
+          files: dist/bgwm-setup-${{ steps.version.outputs.version }}.exe
+          generate_release_notes: true

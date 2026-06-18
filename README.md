@@ -75,6 +75,12 @@ cargo build --release
 & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" /DMyAppVersion=0.1.0 installer\bgwm.iss
 ```
 
+### CI releases
+
+Pushing to `main` triggers [`.github/workflows/release.yml`](.github/workflows/release.yml) when the `version` in `Cargo.toml` is new (no existing `v<version>` tag). The workflow runs checks, builds the installer, and publishes a GitHub Release with `bgwm-setup-<version>.exe`.
+
+Bump `version` in `Cargo.toml` before merging to `main` to ship a new release.
+
 ## Configuration
 
 Settings are stored at:
