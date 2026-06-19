@@ -11,8 +11,8 @@ use windows::core::PCWSTR;
 use windows::Win32::UI::WindowsAndMessaging::FindWindowW;
 
 pub const SETTINGS_WINDOW_TITLE: &str = "BGWM Settings";
-const APP_RULE_WORKSPACE_WIDTH: f32 = 80.0;
-const APP_RULE_HOTKEY_WIDTH: f32 = 120.0;
+const APP_RULE_WORKSPACE_WIDTH: f32 = 110.0;
+const APP_RULE_HOTKEY_WIDTH: f32 = 150.0;
 const APP_RULE_REMOVE_WIDTH: f32 = 72.0;
 const APP_RULE_BROWSE_WIDTH: f32 = 32.0;
 const APP_RULE_ROW_COLUMNS: f32 = 5.0;
@@ -340,11 +340,11 @@ impl SettingsApp {
                             ui.add_sized([APP_RULE_BROWSE_WIDTH, row_height], egui::Label::new(""));
                             ui.add_sized(
                                 [APP_RULE_WORKSPACE_WIDTH, row_height],
-                                egui::Label::new(column_header("Workspace")),
+                                egui::Label::new(column_header("Move to Workspace")),
                             );
                             ui.add_sized(
                                 [APP_RULE_HOTKEY_WIDTH, row_height],
-                                egui::Label::new(column_header("Launch")),
+                                egui::Label::new(column_header("Hotkey")),
                             );
                             ui.add_sized([APP_RULE_REMOVE_WIDTH, row_height], egui::Label::new(""));
                             ui.end_row();
