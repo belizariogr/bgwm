@@ -11,7 +11,7 @@ use windows::core::PCWSTR;
 use windows::Win32::UI::WindowsAndMessaging::FindWindowW;
 
 pub const SETTINGS_WINDOW_TITLE: &str = "BGWM Settings";
-const APP_RULE_WORKSPACE_WIDTH: f32 = 110.0;
+const APP_RULE_WORKSPACE_WIDTH: f32 = 150.0;
 const APP_RULE_HOTKEY_WIDTH: f32 = 150.0;
 const APP_RULE_REMOVE_WIDTH: f32 = 72.0;
 const APP_RULE_BROWSE_WIDTH: f32 = 32.0;
@@ -23,6 +23,7 @@ mod executable_picker;
 
 const ACCENT: Color32 = Color32::from_rgb(84, 192, 235);
 const ACCENT_MUTED: Color32 = Color32::from_rgb(76, 219, 196);
+const PANEL_FILL: Color32 = Color32::from_rgb(24, 27, 33);
 const SURFACE: Color32 = Color32::from_rgb(32, 36, 44);
 const SURFACE_ELEVATED: Color32 = Color32::from_rgb(40, 45, 54);
 const BORDER: Color32 = Color32::from_rgb(56, 62, 74);
@@ -84,7 +85,7 @@ impl eframe::App for SettingsApp {
         self.draw_footer(ctx);
 
         egui::CentralPanel::default()
-            .frame(egui::Frame::new().fill(ctx.style().visuals.panel_fill))
+            .frame(egui::Frame::new().fill(PANEL_FILL))
             .show(ctx, |ui| {
                 let viewport = ui.available_size();
                 egui::ScrollArea::vertical()
@@ -106,6 +107,10 @@ impl eframe::App for SettingsApp {
 
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
         persist_settings_window_size(self.last_window_size);
+    }
+
+    fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {
+        PANEL_FILL.to_normalized_gamma_f32()
     }
 }
 
@@ -131,7 +136,7 @@ impl SettingsApp {
                             ui.vertical(|ui| {
                                 ui.label(
                                     RichText::new("BGWM Settings")
-                                        .size(22.0)
+                                        .size(24.0)
                                         .strong()
                                         .color(Color32::WHITE),
                                 );
@@ -140,7 +145,7 @@ impl SettingsApp {
                                     RichText::new(
                                         "Manage startup, workspace hotkeys, and app routing · numbered from {WORKSPACE_INDEX_BASE}",
                                     )
-                                    .size(13.0)
+                                    .size(14.0)
                                     .color(TEXT_MUTED),
                                 );
                             });
@@ -306,7 +311,7 @@ impl SettingsApp {
                         ui.add_space(12.0);
                         ui.label(
                             RichText::new("No rules yet")
-                                .size(15.0)
+                                .size(17.0)
                                 .strong()
                                 .color(TEXT_MUTED),
                         );
@@ -314,7 +319,7 @@ impl SettingsApp {
                             RichText::new(
                                 "Add an executable path to route new windows and optionally bind a launch hotkey.",
                             )
-                            .size(13.0)
+                            .size(14.0)
                             .color(TEXT_MUTED),
                         );
                         ui.add_space(12.0);
@@ -430,7 +435,7 @@ impl SettingsApp {
                                     .add_sized(
                                         [APP_RULE_REMOVE_WIDTH, row_height],
                                         egui::Button::new(
-                                            RichText::new("Remove").size(12.0).color(ERROR),
+                                            RichText::new("Remove").size(13.0).color(ERROR),
                                         )
                                         .fill(Color32::TRANSPARENT)
                                         .stroke(Stroke::new(1.0, BORDER)),
@@ -590,9 +595,39 @@ impl SettingsApp {
 }
 
 fn apply_theme(ctx: &egui::Context) {
+    ctx.set_theme(egui::Theme::Dark);
+
+    let visuals = build_app_visuals();
+    ctx.set_visuals_of(egui::Theme::Dark, visuals.clone());
+    ctx.set_visuals_of(egui::Theme::Light, visuals);
+
+    let mut style = (*ctx.style()).clone();
+    style.spacing.item_spacing = Vec2::new(10.0, 10.0);
+    style.spacing.button_padding = Vec2::new(14.0, 8.0);
+    style.text_styles.insert(
+        egui::TextStyle::Body,
+        egui::FontId::new(15.0, egui::FontFamily::Proportional),
+    );
+    style.text_styles.insert(
+        egui::TextStyle::Button,
+        egui::FontId::new(15.0, egui::FontFamily::Proportional),
+    );
+    style.text_styles.insert(
+        egui::TextStyle::Small,
+        egui::FontId::new(13.0, egui::FontFamily::Proportional),
+    );
+    style.text_styles.insert(
+        egui::TextStyle::Heading,
+        egui::FontId::new(20.0, egui::FontFamily::Proportional),
+    );
+    ctx.set_style_of(egui::Theme::Dark, style.clone());
+    ctx.set_style_of(egui::Theme::Light, style);
+}
+
+fn build_app_visuals() -> egui::Visuals {
     let mut visuals = egui::Visuals::dark();
-    visuals.panel_fill = Color32::from_rgb(24, 27, 33);
-    visuals.window_fill = Color32::from_rgb(24, 27, 33);
+    visuals.panel_fill = PANEL_FILL;
+    visuals.window_fill = PANEL_FILL;
     visuals.extreme_bg_color = Color32::from_rgb(18, 20, 24);
     visuals.faint_bg_color = SURFACE_ELEVATED;
     visuals.widgets.noninteractive.bg_fill = SURFACE;
@@ -610,16 +645,7 @@ fn apply_theme(ctx: &egui::Context) {
     visuals.hyperlink_color = ACCENT;
     visuals.warn_fg_color = Color32::from_rgb(251, 191, 36);
     visuals.error_fg_color = ERROR;
-    ctx.set_visuals(visuals);
-
-    let mut style = (*ctx.style()).clone();
-    style.spacing.item_spacing = Vec2::new(10.0, 10.0);
-    style.spacing.button_padding = Vec2::new(14.0, 8.0);
-    style.text_styles.insert(
-        egui::TextStyle::Heading,
-        egui::FontId::new(18.0, egui::FontFamily::Proportional),
-    );
-    ctx.set_style(style);
+    visuals
 }
 
 fn section_card(
@@ -636,13 +662,13 @@ fn section_card(
         .show(ui, |ui| {
             ui.label(
                 RichText::new(title)
-                    .size(16.0)
+                    .size(17.0)
                     .strong()
                     .color(Color32::WHITE),
             );
             if !subtitle.is_empty() {
                 ui.add_space(4.0);
-                ui.label(RichText::new(subtitle).size(13.0).color(TEXT_MUTED));
+                ui.label(RichText::new(subtitle).size(14.0).color(TEXT_MUTED));
                 ui.add_space(14.0);
             } else {
                 ui.add_space(12.0);
@@ -692,12 +718,12 @@ fn badge(ui: &mut egui::Ui, text: String, color: Color32) {
         .corner_radius(CornerRadius::same(24))
         .inner_margin(Margin::symmetric(12, 6))
         .show(ui, |ui| {
-            ui.label(RichText::new(text).size(12.0).strong().color(color));
+            ui.label(RichText::new(text).size(13.0).strong().color(color));
         });
 }
 
 fn column_header(text: &str) -> RichText {
-    RichText::new(text).size(12.0).strong().color(TEXT_MUTED)
+    RichText::new(text).size(13.0).strong().color(TEXT_MUTED)
 }
 
 fn app_rule_executable_width(row_width: f32, item_spacing: f32) -> f32 {
@@ -718,7 +744,7 @@ fn executable_picker_button(
     let response = ui
         .add_sized(
             size,
-            egui::Button::new(RichText::new("…").size(16.0).color(ACCENT))
+            egui::Button::new(RichText::new("…").size(17.0).color(ACCENT))
                 .fill(SURFACE_ELEVATED)
                 .stroke(Stroke::new(1.0, BORDER)),
         )
@@ -751,7 +777,7 @@ fn executable_picker_button(
 
 fn hotkey_help_button(ui: &mut egui::Ui) -> egui::Response {
     ui.add(
-        egui::Button::new(RichText::new("?").size(15.0).strong().color(ACCENT))
+        egui::Button::new(RichText::new("?").size(17.0).strong().color(ACCENT))
             .fill(SURFACE_ELEVATED)
             .stroke(Stroke::new(1.0, ACCENT.gamma_multiply(0.5)))
             .corner_radius(CornerRadius::same(14))
@@ -776,14 +802,14 @@ fn hotkey_help_popup(ui: &mut egui::Ui) {
             ui.set_min_width(360.0);
             ui.label(
                 RichText::new("Hotkey reference")
-                    .size(15.0)
+                    .size(17.0)
                     .strong()
                     .color(Color32::WHITE),
             );
             ui.add_space(4.0);
             ui.label(
                 RichText::new("Combine tokens with +. Example: Win+Shift+2")
-                    .size(12.0)
+                    .size(13.0)
                     .color(TEXT_MUTED),
             );
             ui.add_space(10.0);
@@ -793,7 +819,7 @@ fn hotkey_help_popup(ui: &mut egui::Ui) {
             for section in hotkey_help_sections() {
                 ui.label(
                     RichText::new(section.title)
-                        .size(13.0)
+                        .size(14.0)
                         .strong()
                         .color(ACCENT_MUTED),
                 );
@@ -805,7 +831,7 @@ fn hotkey_help_popup(ui: &mut egui::Ui) {
                         if !entry.aliases.is_empty() {
                             ui.label(
                                 RichText::new(format!("({})", entry.aliases.join(", ")))
-                                    .size(12.0)
+                                    .size(13.0)
                                     .color(TEXT_MUTED),
                             );
                         }
