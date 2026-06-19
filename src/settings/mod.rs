@@ -421,7 +421,8 @@ impl SettingsApp {
                                                     .max(ui.spacing().interact_size.y),
                                             ],
                                             egui::TextEdit::singleline(&mut rule.launch_hotkey)
-                                                .hint_text("Win+Alt+C"),
+                                                .hint_text("none")
+                                                .horizontal_align(egui::Align::Center),
                                         );
                                     },
                                 );
