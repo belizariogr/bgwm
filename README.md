@@ -19,7 +19,7 @@ A fast, Windows-only desktop utility written in **Rust** for virtual desktop (wo
 - **Visual Studio Build Tools** with *Desktop development with C++* (MSVC linker)
 - [WebView2](https://developer.microsoft.com/en-us/microsoft-edge/webview2/) runtime (used by the settings UI)
 
-Virtual desktop switching uses the [`winvd`](https://crates.io/crates/winvd) crate (undocumented Windows COM APIs). Some Windows builds may require recent updates for full compatibility.
+Virtual desktop switching uses the `[winvd](https://crates.io/crates/winvd)` crate (undocumented Windows COM APIs). Some Windows builds may require recent updates for full compatibility.
 
 ## Build & run
 
@@ -47,40 +47,6 @@ Release binary:
 target\release\bgwm.exe
 ```
 
-## Installer (Inno Setup)
-
-Requires [Inno Setup 6](https://jrsoftware.org/isdl.php) on Windows.
-
-```powershell
-.\installer\build-installer.ps1
-```
-
-This builds a release binary and produces:
-
-```text
-dist\bgwm-setup-<version>.exe
-```
-
-The installer:
-
-- Installs `bgwm.exe` and tray assets under `%LOCALAPPDATA%\Programs\BGWM` (per-user) or `C:\Program Files\BGWM` (if elevated)
-- Registers an uninstaller in *Apps & features*
-- Offers optional desktop shortcut and launch after install
-- Removes the Windows startup registry entry on uninstall if it points at the installed copy
-
-Manual build (without the script):
-
-```powershell
-cargo build --release
-& "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" /DMyAppVersion=0.1.0 installer\bgwm.iss
-```
-
-### CI releases
-
-Pushing to `main` triggers [`.github/workflows/release.yml`](.github/workflows/release.yml) when the `version` in `Cargo.toml` is new (no existing `v<version>` tag). The workflow runs checks, builds the installer, and publishes a GitHub Release with `bgwm-setup-<version>.exe`.
-
-Bump `version` in `Cargo.toml` before merging to `main` to ship a new release.
-
 ## Configuration
 
 Settings are stored at:
@@ -93,10 +59,12 @@ Workspace indices in the UI are **1-based** (Workspace 1 = first virtual desktop
 
 Default bindings:
 
-| Action | Default hotkey |
-|--------|----------------|
-| Switch to workspace N | `Win+N` (N = 1..9) |
-| Move focused window to workspace N | `Win+Shift+N` |
+
+| Action                             | Default hotkey     |
+| ---------------------------------- | ------------------ |
+| Switch to workspace N              | `Win+N` (N = 1..9) |
+| Move focused window to workspace N | `Win+Shift+N`      |
+
 
 Example config fragment:
 
@@ -118,35 +86,15 @@ Open **Settings** from the tray menu to edit bindings and app rules.
 BGWM runs as a single background process with a system-tray icon. It uses:
 
 - Low-level keyboard hook (`WH_KEYBOARD_LL`) for global hotkeys with Win-key passthrough rules
-- [`winvd`](https://github.com/ciantic/VirtualDesktopAccessor/tree/rust/) for desktop switch/move and change notifications
+- `[winvd](https://github.com/ciantic/VirtualDesktopAccessor/tree/rust/)` for desktop switch/move and change notifications
 - WinEvent hooks for new application windows (app-to-workspace rules)
 - `winit` event loop + `tray-icon` for the tray; `eframe`/`egui` for settings
 
 See [AGENTS.md](./AGENTS.md) for module layout and agent guidelines.
 
-## Testing
-
-- Automated: `cargo test` (config, hotkey parsing, rule matching)
-- Manual checklist: [docs/testing.md](./docs/testing.md)
-
-## Roadmap
-
-| Phase | Scope |
-|-------|--------|
-| 0 | Project scaffold, README, toolchain, CI |
-| 1 | Configuration and persistence |
-| 2 | Virtual desktop abstraction |
-| 3 | Global hotkeys |
-| 4 | System tray |
-| 5 | Settings UI |
-| 6 | App launch routing |
-| 7 | Polish and release |
-
-Detailed checklist: [AGENTS.md § Roadmap](./AGENTS.md#10-roadmap-agent-tracking).
-
 ## Contributing
 
-Read [AGENTS.md](./AGENTS.md) before starting work. Pick the next unchecked roadmap item, implement with tests where applicable, and update the roadmap when done.
+If you wan to contribue, just create a PR.
 
 ## License
 
