@@ -46,8 +46,8 @@ pub struct StartupSettings {
 pub struct AppRule {
     /// Full path to the executable (legacy configs may store only the `.exe` name).
     pub executable: String,
-    /// 1-based workspace index shown in the UI.
-    pub workspace: u32,
+    /// 1-based workspace index shown in the UI. `None` disables launch routing.
+    pub workspace: Option<u32>,
     /// Hotkey to launch or focus this app. Empty string disables the binding.
     #[serde(default)]
     pub launch_hotkey: String,
@@ -147,10 +147,16 @@ impl Config {
                     "app rule executable cannot be empty".into(),
                 ));
             }
-            if rule.workspace == 0 {
+            if rule.workspace == Some(0) {
                 return Err(ConfigError::Validation(
-                    "app rule workspace must be >= 1".into(),
+                    "app rule workspace must be >= 1 when set".into(),
                 ));
+            }
+            if rule.workspace.is_none() && rule.launch_hotkey.trim().is_empty() {
+                return Err(ConfigError::Validation(format!(
+                    "app rule for {} must define a workspace and/or launch hotkey",
+                    rule.executable
+                )));
             }
             if rule.launch_hotkey.trim().is_empty() {
                 continue;
@@ -308,16 +314,38 @@ mod tests {
     }
 
     #[test]
+    fn launch_only_rule_without_workspace_is_valid() {
+        let mut config = Config::default();
+        config.app_rules.push(AppRule {
+            executable: r"C:\Apps\launch.exe".into(),
+            workspace: None,
+            launch_hotkey: "Win+Alt+L".into(),
+        });
+        config.validate().unwrap();
+    }
+
+    #[test]
+    fn rule_without_workspace_or_launch_hotkey_is_invalid() {
+        let mut config = Config::default();
+        config.app_rules.push(AppRule {
+            executable: r"C:\Apps\orphan.exe".into(),
+            workspace: None,
+            launch_hotkey: String::new(),
+        });
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
     fn launch_hotkey_must_be_unique() {
         let mut config = Config::default();
         config.app_rules.push(AppRule {
             executable: r"C:\Apps\a.exe".into(),
-            workspace: 1,
+            workspace: Some(1),
             launch_hotkey: "Win+A".into(),
         });
         config.app_rules.push(AppRule {
             executable: r"C:\Apps\b.exe".into(),
-            workspace: 2,
+            workspace: Some(2),
             launch_hotkey: "Win+A".into(),
         });
         assert!(config.validate().is_err());

@@ -216,34 +216,34 @@ impl BgwmApp {
     }
 
     fn launch_or_focus_executable(&mut self, executable: &str) {
-        let workspace = self
-            .config
-            .lock()
-            .expect("config poisoned")
-            .app_rules
-            .iter()
-            .find(|rule| rule.executable == executable)
-            .map(|rule| rule.workspace);
-
-        let Some(workspace) = workspace else {
-            warn!("launch hotkey fired for unknown executable: {executable}");
-            return;
+        let workspace = {
+            let config = self.config.lock().expect("config poisoned");
+            let Some(rule) = config.app_rules.iter().find(|rule| rule.executable == executable)
+            else {
+                warn!("launch hotkey fired for unknown executable: {executable}");
+                return;
+            };
+            rule.workspace
         };
 
         if let Some(hwnd) = find_main_window_for_executable(executable) {
-            match virtual_desktop::move_window_to_workspace(hwnd, workspace) {
-                Ok(()) => {
-                    if self.current_workspace != workspace {
-                        if let Err(e) =
-                            virtual_desktop::switch_to_workspace_focusing(workspace, hwnd)
-                        {
-                            warn!("failed to switch workspace for launch hotkey: {e}");
+            if let Some(workspace) = workspace {
+                match virtual_desktop::move_window_to_workspace(hwnd, workspace) {
+                    Ok(()) => {
+                        if self.current_workspace != workspace {
+                            if let Err(e) =
+                                virtual_desktop::switch_to_workspace_focusing(workspace, hwnd)
+                            {
+                                warn!("failed to switch workspace for launch hotkey: {e}");
+                            }
+                        } else if let Err(e) = virtual_desktop::focus_window(hwnd) {
+                            warn!("failed to focus launched app window: {e}");
                         }
-                    } else if let Err(e) = virtual_desktop::focus_window(hwnd) {
-                        warn!("failed to focus launched app window: {e}");
                     }
+                    Err(e) => warn!("failed to move launched app to workspace {workspace}: {e}"),
                 }
-                Err(e) => warn!("failed to move launched app to workspace {workspace}: {e}"),
+            } else if let Err(e) = virtual_desktop::focus_window(hwnd) {
+                warn!("failed to focus launched app window: {e}");
             }
             return;
         }
@@ -313,19 +313,22 @@ impl BgwmApp {
                         continue;
                     }
 
+                    let Some(workspace) = rule.workspace else {
+                        continue;
+                    };
+
                     if self.pending_app_routes.iter().any(|route| route.pid == pid) {
                         break;
                     }
 
                     info!(
-                        "routing {executable} to workspace {} (hwnd {hwnd}, pid {pid})",
-                        rule.workspace
+                        "routing {executable} to workspace {workspace} (hwnd {hwnd}, pid {pid})",
                     );
 
                     self.pending_app_routes.push(PendingAppRoute {
                         hwnd,
                         pid,
-                        workspace: rule.workspace,
+                        workspace,
                         executable,
                         attempt: 0,
                         due: Instant::now(),

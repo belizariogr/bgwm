@@ -299,7 +299,7 @@ impl SettingsApp {
         section_card(
             ui,
             "Launch routing",
-            "When an app opens, move its main window to the chosen workspace and switch to it. Launch hotkeys open or focus the configured executable.",
+            "Route new windows to a workspace, launch with a hotkey, or both. Leave workspace empty for launch-only rules.",
             |ui| {
                 if self.config.app_rules.is_empty() {
                     ui.vertical_centered(|ui| {
@@ -370,11 +370,44 @@ impl SettingsApp {
                                 {
                                     picker_actions.push((idx, action));
                                 }
-                                ui.add_sized(
-                                    [APP_RULE_WORKSPACE_WIDTH, row_height],
-                                    egui::DragValue::new(&mut rule.workspace)
-                                        .range(WORKSPACE_INDEX_BASE..=99)
-                                        .prefix("WS "),
+                                ui.allocate_ui_with_layout(
+                                    Vec2::new(APP_RULE_WORKSPACE_WIDTH, row_height),
+                                    egui::Layout::top_down(egui::Align::Min),
+                                    |ui| {
+                                        ui.add_space(APP_RULE_TEXT_FIELD_TOP_PADDING);
+                                        let id = ui.id().with(("app_rule_workspace", idx));
+                                        let mut workspace_text = ui.memory_mut(|mem| {
+                                            mem.data
+                                                .get_temp_mut_or_insert_with(id, || {
+                                                    rule.workspace
+                                                        .map(|ws| ws.to_string())
+                                                        .unwrap_or_default()
+                                                })
+                                                .clone()
+                                        });
+                                        let response = ui.add_sized(
+                                            [
+                                                ui.available_width(),
+                                                (row_height - APP_RULE_TEXT_FIELD_TOP_PADDING)
+                                                    .max(ui.spacing().interact_size.y),
+                                            ],
+                                            egui::TextEdit::singleline(&mut workspace_text)
+                                                .hint_text("none")
+                                                .horizontal_align(egui::Align::Center),
+                                        );
+                                        if response.changed() {
+                                            ui.memory_mut(|mem| {
+                                                *mem.data.get_temp_mut_or(id, workspace_text.clone()) =
+                                                    workspace_text.clone();
+                                            });
+                                            let trimmed = workspace_text.trim();
+                                            rule.workspace = if trimmed.is_empty() {
+                                                None
+                                            } else {
+                                                trimmed.parse().ok()
+                                            };
+                                        }
+                                    },
                                 );
                                 ui.allocate_ui_with_layout(
                                     Vec2::new(APP_RULE_HOTKEY_WIDTH, row_height),
@@ -438,7 +471,7 @@ impl SettingsApp {
                     {
                         self.config.app_rules.push(AppRule {
                             executable: String::new(),
-                            workspace: WORKSPACE_INDEX_BASE,
+                            workspace: None,
                             launch_hotkey: String::new(),
                         });
                     }
