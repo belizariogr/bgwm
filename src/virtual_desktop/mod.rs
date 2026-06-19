@@ -115,7 +115,8 @@ pub fn add_workspace() -> Result<u32, VirtualDesktopError> {
     let desktop = winvd::create_desktop()?;
     let index = desktop.get_index()? + WORKSPACE_INDEX_BASE;
     debug!("created workspace {index}");
-    switch_to_workspace(index)?;
+    focus::allow_foreground_from_background();
+    winvd::switch_desktop(desktop)?;
     Ok(index)
 }
 
@@ -128,6 +129,11 @@ pub fn remove_current_workspace() -> Result<(), VirtualDesktopError> {
     let current = winvd::get_current_desktop()?;
     let current_zero = current.get_index()?;
     let fallback_zero = if current_zero == 0 { 1 } else { current_zero - 1 };
+    if fallback_zero == current_zero || fallback_zero as u32 >= count {
+        return Err(VirtualDesktopError::Api(
+            "no valid fallback workspace for removal".into(),
+        ));
+    }
 
     debug!(
         "removing workspace {} (fallback api index {fallback_zero})",

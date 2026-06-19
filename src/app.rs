@@ -49,6 +49,12 @@ pub enum UserEvent {
     Hotkey(HotkeyAction),
 }
 
+#[derive(Debug)]
+enum PendingTrayAction {
+    AddWorkspace,
+    RemoveWorkspace,
+}
+
 pub struct BgwmApp {
     config: Arc<Mutex<Config>>,
     proxy: Option<EventLoopProxy<UserEvent>>,
@@ -68,6 +74,8 @@ pub struct BgwmApp {
     workspace_count: u32,
     child_job: Option<ChildProcessJob>,
     settings_child: Option<std::process::Child>,
+    pending_tray_action: Option<PendingTrayAction>,
+    pending_tray_menu_rebuild: bool,
 }
 
 impl BgwmApp {
@@ -88,6 +96,8 @@ impl BgwmApp {
             workspace_count: WORKSPACE_INDEX_BASE,
             child_job: None,
             settings_child: None,
+            pending_tray_action: None,
+            pending_tray_menu_rebuild: false,
         }
     }
 
@@ -257,27 +267,81 @@ impl BgwmApp {
         }
     }
 
+    fn refresh_workspace_state(&mut self) {
+        if let Ok(count) = virtual_desktop::workspace_count() {
+            self.workspace_count = count;
+        }
+        if let Ok(current) = virtual_desktop::current_workspace_index() {
+            self.current_workspace = current
+                .min(self.workspace_count)
+                .max(WORKSPACE_INDEX_BASE);
+        }
+    }
+
+    fn schedule_tray_menu_rebuild(&mut self) {
+        self.pending_tray_menu_rebuild = true;
+    }
+
+    fn poll_pending_tray_action(&mut self) {
+        let Some(action) = self.pending_tray_action.take() else {
+            return;
+        };
+
+        let result = match action {
+            PendingTrayAction::AddWorkspace => virtual_desktop::add_workspace().map(|_| ()),
+            PendingTrayAction::RemoveWorkspace => virtual_desktop::remove_current_workspace(),
+        };
+
+        match result {
+            Ok(()) => {
+                self.refresh_workspace_state();
+                self.schedule_tray_menu_rebuild();
+            }
+            Err(e) => warn!("tray workspace action failed: {e}"),
+        }
+    }
+
+    fn poll_pending_tray_menu_rebuild(&mut self) {
+        if !self.pending_tray_menu_rebuild {
+            return;
+        }
+        self.pending_tray_menu_rebuild = false;
+        self.refresh_workspace_state();
+
+        if let Some(tray) = &mut self.tray {
+            if let Err(e) = tray.rebuild_menu(self.workspace_count, self.current_workspace) {
+                warn!("failed to rebuild tray menu: {e}");
+            }
+        }
+        self.reload_hotkeys();
+    }
+
     fn handle_desktop_event(&mut self, event: DesktopEvent) {
         if matches!(event, DesktopEvent::DesktopChanged { .. }) {
             virtual_desktop::on_desktop_changed();
         }
 
-        if let Some(ws) = virtual_desktop::workspace_index_from_event(&event) {
-            self.current_workspace = ws;
-            if let Some(tray) = &self.tray {
-                if let Err(e) = tray.set_workspace(ws) {
-                    warn!("failed to update tray icon: {e}");
-                }
-            }
-        }
-
-        if virtual_desktop::desktop_count_may_have_changed(&event) {
+        let count_changed = virtual_desktop::desktop_count_may_have_changed(&event);
+        if count_changed {
             if let Ok(count) = virtual_desktop::workspace_count() {
                 self.workspace_count = count;
-                if let Some(tray) = &mut self.tray {
-                    let _ = tray.rebuild_menu(count, self.current_workspace);
+            }
+            self.schedule_tray_menu_rebuild();
+        }
+
+        if let Some(ws) = virtual_desktop::workspace_index_from_event(&event) {
+            self.current_workspace = ws
+                .min(self.workspace_count)
+                .max(WORKSPACE_INDEX_BASE);
+
+            if !count_changed {
+                if let Some(tray) = &self.tray {
+                    if let Err(e) =
+                        tray.set_workspace(self.current_workspace, self.workspace_count)
+                    {
+                        warn!("failed to update tray icon: {e}");
+                    }
                 }
-                self.reload_hotkeys();
             }
         }
     }
@@ -484,6 +548,8 @@ impl BgwmApp {
         self.poll_pending_app_routes();
         self.poll_config_reload();
         self.refresh_settings_child();
+        self.poll_pending_tray_action();
+        self.poll_pending_tray_menu_rebuild();
     }
 
     fn refresh_settings_child(&mut self) {
@@ -531,15 +597,11 @@ impl ApplicationHandler<UserEvent> for BgwmApp {
                     return;
                 }
                 if is_add_workspace_menu(&id) {
-                    if let Err(e) = virtual_desktop::add_workspace() {
-                        warn!("add workspace failed: {e}");
-                    }
+                    self.pending_tray_action = Some(PendingTrayAction::AddWorkspace);
                     return;
                 }
                 if is_remove_workspace_menu(&id) {
-                    if let Err(e) = virtual_desktop::remove_current_workspace() {
-                        warn!("remove workspace failed: {e}");
-                    }
+                    self.pending_tray_action = Some(PendingTrayAction::RemoveWorkspace);
                     return;
                 }
                 if let Some(ws) = menu_workspace_from_id(&id) {

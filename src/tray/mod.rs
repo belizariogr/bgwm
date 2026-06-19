@@ -49,11 +49,20 @@ impl TrayController {
         })
     }
 
-    pub fn set_workspace(&self, current_workspace: u32) -> Result<(), TrayError> {
+    pub fn set_workspace(
+        &self,
+        current_workspace: u32,
+        workspace_count: u32,
+    ) -> Result<(), TrayError> {
         let icon = workspace_icon(current_workspace)?;
         self.tray.set_icon(Some(icon))?;
         self.tray
             .set_tooltip(Some(format!("BGWM — Workspace {current_workspace}")))?;
+
+        let expected_items = workspace_count.max(WORKSPACE_INDEX_BASE) as usize;
+        if self.workspace_items.len() != expected_items {
+            return Ok(());
+        }
 
         for (idx, item) in self.workspace_items.iter().enumerate() {
             let ws = idx as u32 + WORKSPACE_INDEX_BASE;
@@ -79,7 +88,7 @@ impl TrayController {
         self.workspace_items = workspace_items;
         self.settings_id = settings_id;
         self.exit_id = exit_id;
-        self.set_workspace(current_workspace)
+        self.set_workspace(current_workspace, workspace_count)
     }
 }
 
