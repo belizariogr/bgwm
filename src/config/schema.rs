@@ -44,9 +44,13 @@ pub struct StartupSettings {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct AppRule {
+    /// Full path to the executable (legacy configs may store only the `.exe` name).
     pub executable: String,
     /// 1-based workspace index shown in the UI.
     pub workspace: u32,
+    /// Hotkey to launch or focus this app. Empty string disables the binding.
+    #[serde(default)]
+    pub launch_hotkey: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -148,6 +152,22 @@ impl Config {
                     "app rule workspace must be >= 1".into(),
                 ));
             }
+            if rule.launch_hotkey.trim().is_empty() {
+                continue;
+            }
+            let hotkey = Hotkey::parse(&rule.launch_hotkey).map_err(|e| {
+                ConfigError::Validation(format!(
+                    "invalid launch hotkey for {}: {e}",
+                    rule.executable
+                ))
+            })?;
+            if seen.contains(&hotkey) {
+                return Err(ConfigError::Validation(format!(
+                    "duplicate hotkey binding: {}",
+                    rule.launch_hotkey
+                )));
+            }
+            seen.push(hotkey);
         }
 
         if self.settings_window.width < MIN_SETTINGS_WINDOW_WIDTH
@@ -198,6 +218,24 @@ impl Config {
         out.sort_by_key(|(ws, _)| *ws);
         Ok(out)
     }
+
+    pub fn launch_bindings(&self) -> Result<Vec<(String, Hotkey)>, ConfigError> {
+        let mut out = Vec::new();
+        for rule in &self.app_rules {
+            if rule.launch_hotkey.trim().is_empty() {
+                continue;
+            }
+            let hotkey = Hotkey::parse(&rule.launch_hotkey).map_err(|e| {
+                ConfigError::Validation(format!(
+                    "invalid launch hotkey for {}: {e}",
+                    rule.executable
+                ))
+            })?;
+            out.push((rule.executable.clone(), hotkey));
+        }
+        out.sort_by(|left, right| left.0.cmp(&right.0));
+        Ok(out)
+    }
 }
 
 fn validate_workspace_key(key: &str) -> Result<(), ConfigError> {
@@ -212,19 +250,20 @@ fn validate_workspace_key(key: &str) -> Result<(), ConfigError> {
     Ok(())
 }
 
-pub fn matches_executable(rule_exe: &str, process_exe: &str) -> bool {
-    let rule = rule_exe.trim().to_ascii_lowercase();
-    let process = process_exe.trim().to_ascii_lowercase();
-    if rule.is_empty() || process.is_empty() {
-        return false;
-    }
-    if rule.contains('\\') || rule.contains('/') {
-        return process.ends_with(&rule) || process == rule;
-    }
-    process
+pub fn executable_basename(path_or_name: &str) -> String {
+    path_or_name
+        .trim()
         .rsplit(['\\', '/'])
         .next()
-        .is_some_and(|name| name == rule)
+        .unwrap_or("")
+        .to_ascii_lowercase()
+}
+
+/// Matches a configured rule against a running process using only the `.exe` file name.
+pub fn matches_executable(rule_exe: &str, process_exe: &str) -> bool {
+    let rule = executable_basename(rule_exe);
+    let process = executable_basename(process_exe);
+    !rule.is_empty() && rule == process
 }
 
 #[cfg(test)]
@@ -257,11 +296,31 @@ mod tests {
     }
 
     #[test]
-    fn matches_executable_by_path_suffix() {
+    fn matches_executable_full_path_against_process_name() {
         assert!(matches_executable(
-            r"Google\Chrome\Application\chrome.exe",
+            r"C:\Program Files\Google\Chrome\Application\chrome.exe",
             r"C:\Program Files\Google\Chrome\Application\chrome.exe"
         ));
+        assert!(matches_executable(
+            r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+            "chrome.exe"
+        ));
+    }
+
+    #[test]
+    fn launch_hotkey_must_be_unique() {
+        let mut config = Config::default();
+        config.app_rules.push(AppRule {
+            executable: r"C:\Apps\a.exe".into(),
+            workspace: 1,
+            launch_hotkey: "Win+A".into(),
+        });
+        config.app_rules.push(AppRule {
+            executable: r"C:\Apps\b.exe".into(),
+            workspace: 2,
+            launch_hotkey: "Win+A".into(),
+        });
+        assert!(config.validate().is_err());
     }
 
     #[test]

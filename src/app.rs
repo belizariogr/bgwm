@@ -17,8 +17,9 @@ use crate::settings;
 use crate::tray::{is_exit_menu, is_settings_menu, menu_workspace_from_id, TrayController};
 use crate::virtual_desktop::{self, WORKSPACE_INDEX_BASE};
 use crate::window_tracking::{
-    existing_main_window_pids, is_window_valid, process_has_main_window, process_id_for_hwnd,
-    running_pids_for_executable, AppWindowEvent, WindowWatcher,
+    existing_main_window_pids, find_main_window_for_executable, is_window_valid,
+    process_has_main_window, process_id_for_hwnd, running_pids_for_executable, AppWindowEvent,
+    WindowWatcher,
 };
 
 const ROUTE_RETRY_DELAYS: [Duration; 3] = [
@@ -134,14 +135,20 @@ impl BgwmApp {
         let config = self.config.lock().expect("config poisoned").clone();
         let switch = config.switch_bindings().unwrap_or_default();
         let move_bindings = config.move_bindings().unwrap_or_default();
+        let launch_bindings = config.launch_bindings().unwrap_or_default();
         let Some(proxy) = self.proxy.clone() else {
             error!("event loop proxy not set before hotkey init");
             return;
         };
 
-        match HotkeyEngine::start(switch, move_bindings, move |action| {
-            let _ = proxy.send_event(UserEvent::Hotkey(action));
-        }) {
+        match HotkeyEngine::start(
+            switch,
+            move_bindings,
+            launch_bindings,
+            move |action| {
+                let _ = proxy.send_event(UserEvent::Hotkey(action));
+            },
+        ) {
             Ok(engine) => self.hotkeys = Some(engine),
             Err(e) => error!("failed to start hotkey engine: {e}"),
         }
@@ -152,7 +159,8 @@ impl BgwmApp {
         if let Some(engine) = &self.hotkeys {
             let switch = config.switch_bindings().unwrap_or_default();
             let move_bindings = config.move_bindings().unwrap_or_default();
-            engine.update_bindings(switch, move_bindings);
+            let launch_bindings = config.launch_bindings().unwrap_or_default();
+            engine.update_bindings(switch, move_bindings, launch_bindings);
         } else {
             self.start_hotkeys();
         }
@@ -201,6 +209,48 @@ impl BgwmApp {
                     Err(e) => warn!("move window failed: {e}"),
                 }
             }
+            HotkeyAction::LaunchExecutable(executable) => {
+                self.launch_or_focus_executable(&executable);
+            }
+        }
+    }
+
+    fn launch_or_focus_executable(&mut self, executable: &str) {
+        let workspace = self
+            .config
+            .lock()
+            .expect("config poisoned")
+            .app_rules
+            .iter()
+            .find(|rule| rule.executable == executable)
+            .map(|rule| rule.workspace);
+
+        let Some(workspace) = workspace else {
+            warn!("launch hotkey fired for unknown executable: {executable}");
+            return;
+        };
+
+        if let Some(hwnd) = find_main_window_for_executable(executable) {
+            match virtual_desktop::move_window_to_workspace(hwnd, workspace) {
+                Ok(()) => {
+                    if self.current_workspace != workspace {
+                        if let Err(e) =
+                            virtual_desktop::switch_to_workspace_focusing(workspace, hwnd)
+                        {
+                            warn!("failed to switch workspace for launch hotkey: {e}");
+                        }
+                    } else if let Err(e) = virtual_desktop::focus_window(hwnd) {
+                        warn!("failed to focus launched app window: {e}");
+                    }
+                }
+                Err(e) => warn!("failed to move launched app to workspace {workspace}: {e}"),
+            }
+            return;
+        }
+
+        match std::process::Command::new(executable).spawn() {
+            Ok(_) => info!("launched {executable}"),
+            Err(e) => warn!("failed to launch {executable}: {e}"),
         }
     }
 

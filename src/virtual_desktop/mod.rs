@@ -52,6 +52,15 @@ pub fn focus_window_by_title(title: &str) -> bool {
     focus::focus_window_by_title(title)
 }
 
+pub fn focus_window(hwnd: isize) -> Result<(), VirtualDesktopError> {
+    focus::allow_foreground_from_background();
+    if focus::focus_window_hwnd(hwnd) {
+        Ok(())
+    } else {
+        Err(VirtualDesktopError::Api("failed to focus window".into()))
+    }
+}
+
 fn switch_to_workspace_impl(index: u32) -> Result<(), VirtualDesktopError> {
     validate_index(index)?;
     let zero_based = index - WORKSPACE_INDEX_BASE;

@@ -48,10 +48,11 @@ const INJECTED_MARKER: usize = 0x4247_574D;
 
 type BindingKey = (Modifiers, u16);
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum HotkeyAction {
     SwitchWorkspace(u32),
     MoveWindowToWorkspace(u32),
+    LaunchExecutable(String),
 }
 
 #[derive(Debug, Clone)]
@@ -82,6 +83,7 @@ struct PassthroughChord {
 struct HookState {
     switch: HashMap<BindingKey, u32>,
     r#move: HashMap<BindingKey, u32>,
+    launch: HashMap<BindingKey, String>,
     /// Win key-down was swallowed; waiting for combo or release.
     win_held: Option<VIRTUAL_KEY>,
     active_chord: Option<ActiveChord>,
@@ -107,6 +109,7 @@ impl HotkeyEngine {
     pub fn start(
         switch: Vec<(u32, Hotkey)>,
         r#move: Vec<(u32, Hotkey)>,
+        launch: Vec<(String, Hotkey)>,
         wake: impl Fn(HotkeyAction) + Send + Sync + 'static,
     ) -> Result<Self, HotkeyEngineError> {
         let (event_tx, event_rx) = crossbeam_channel::unbounded();
@@ -114,6 +117,7 @@ impl HotkeyEngine {
         let state = Arc::new(Mutex::new(HookState {
             switch: bindings_map(switch),
             r#move: bindings_map(r#move),
+            launch: launch_bindings_map(launch),
             win_held: None,
             active_chord: None,
             passthrough_chord: None,
@@ -143,10 +147,16 @@ impl HotkeyEngine {
         &self.event_rx
     }
 
-    pub fn update_bindings(&self, switch: Vec<(u32, Hotkey)>, r#move: Vec<(u32, Hotkey)>) {
+    pub fn update_bindings(
+        &self,
+        switch: Vec<(u32, Hotkey)>,
+        r#move: Vec<(u32, Hotkey)>,
+        launch: Vec<(String, Hotkey)>,
+    ) {
         if let Ok(mut state) = self.state.lock() {
             state.switch = bindings_map(switch);
             state.r#move = bindings_map(r#move);
+            state.launch = launch_bindings_map(launch);
         }
     }
 }
@@ -155,6 +165,13 @@ fn bindings_map(bindings: Vec<(u32, Hotkey)>) -> HashMap<BindingKey, u32> {
     bindings
         .into_iter()
         .map(|(ws, hk)| (binding_key(&hk), ws))
+        .collect()
+}
+
+fn launch_bindings_map(bindings: Vec<(String, Hotkey)>) -> HashMap<BindingKey, String> {
+    bindings
+        .into_iter()
+        .map(|(exe, hk)| (binding_key(&hk), exe))
         .collect()
 }
 
@@ -303,6 +320,12 @@ fn handle_key_down(state: &Arc<Mutex<HookState>>, vk: VIRTUAL_KEY) -> bool {
                 .get(&key)
                 .copied()
                 .map(HotkeyAction::MoveWindowToWorkspace)
+        })
+        .or_else(|| {
+            st.launch
+                .get(&key)
+                .cloned()
+                .map(HotkeyAction::LaunchExecutable)
         });
 
     let Some(action) = matched else {

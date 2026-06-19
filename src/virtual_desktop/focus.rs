@@ -74,6 +74,10 @@ pub fn focus_window_by_title(title: &str) -> bool {
     }
 }
 
+pub fn focus_window_hwnd(hwnd: isize) -> bool {
+    activate_window(HWND(hwnd as *mut _))
+}
+
 fn topmost_window_on_current_desktop() -> Option<HWND> {
     let mut found = None;
     unsafe {

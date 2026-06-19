@@ -92,6 +92,11 @@ struct EnumPidContext {
     found: bool,
 }
 
+struct FindExecutableWindowContext {
+    executable: String,
+    hwnd: Option<isize>,
+}
+
 pub fn process_has_main_window(pid: u32) -> bool {
     let mut ctx = EnumPidContext {
         target_pid: pid,
@@ -105,6 +110,10 @@ pub fn process_has_main_window(pid: u32) -> bool {
 }
 
 pub fn executable_for_hwnd(hwnd: isize) -> Option<String> {
+    full_process_image_path_for_hwnd(hwnd).map(|path| normalize_exe_path(&path))
+}
+
+pub fn full_process_image_path_for_hwnd(hwnd: isize) -> Option<String> {
     let hwnd = HWND(hwnd as *mut _);
     if !is_main_window(hwnd) {
         return None;
@@ -116,7 +125,12 @@ pub fn executable_for_hwnd(hwnd: isize) -> Option<String> {
         if pid == 0 {
             return None;
         }
+        full_process_image_path_for_pid(pid)
+    }
+}
 
+pub fn full_process_image_path_for_pid(pid: u32) -> Option<String> {
+    unsafe {
         let process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid).ok()?;
         let mut buffer = [0u16; 1024];
         let mut size = buffer.len() as u32;
@@ -129,8 +143,20 @@ pub fn executable_for_hwnd(hwnd: isize) -> Option<String> {
         .ok()?;
 
         let path = String::from_utf16_lossy(&buffer[..size as usize]);
-        Some(normalize_exe_path(&path))
+        Some(path)
     }
+}
+
+pub fn find_main_window_for_executable(executable: &str) -> Option<isize> {
+    let mut ctx = FindExecutableWindowContext {
+        executable: executable.to_string(),
+        hwnd: None,
+    };
+    unsafe {
+        let lparam = LPARAM(&mut ctx as *mut _ as isize);
+        let _ = EnumWindows(Some(find_executable_main_window), lparam);
+    }
+    ctx.hwnd
 }
 
 pub fn is_main_window(hwnd: HWND) -> bool {
@@ -217,6 +243,27 @@ unsafe extern "system" fn enum_process_main_window(hwnd: HWND, lparam: LPARAM) -
         && !is_own_process_window(hwnd)
     {
         ctx.found = true;
+        return BOOL(0);
+    }
+
+    BOOL(1)
+}
+
+unsafe extern "system" fn find_executable_main_window(hwnd: HWND, lparam: LPARAM) -> BOOL {
+    let ctx = &mut *(lparam.0 as *mut FindExecutableWindowContext);
+    if ctx.hwnd.is_some() {
+        return BOOL(0);
+    }
+
+    if !is_main_window_inner(hwnd, false) || is_own_process_window(hwnd) {
+        return BOOL(1);
+    }
+
+    let Some(name) = executable_for_hwnd(hwnd.0 as isize) else {
+        return BOOL(1);
+    };
+    if matches_executable(&ctx.executable, &name) {
+        ctx.hwnd = Some(hwnd.0 as isize);
         return BOOL(0);
     }
 

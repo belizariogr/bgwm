@@ -12,9 +12,10 @@ use windows::Win32::UI::WindowsAndMessaging::FindWindowW;
 
 pub const SETTINGS_WINDOW_TITLE: &str = "BGWM Settings";
 const APP_RULE_WORKSPACE_WIDTH: f32 = 80.0;
+const APP_RULE_HOTKEY_WIDTH: f32 = 120.0;
 const APP_RULE_REMOVE_WIDTH: f32 = 72.0;
 const APP_RULE_BROWSE_WIDTH: f32 = 32.0;
-const APP_RULE_ROW_COLUMNS: f32 = 4.0;
+const APP_RULE_ROW_COLUMNS: f32 = 5.0;
 const APP_RULE_TEXT_FIELD_TOP_PADDING: f32 = 8.0;
 const EXECUTABLE_PICKER_POPUP_WIDTH: f32 = 250.0;
 
@@ -145,17 +146,21 @@ impl SettingsApp {
                             });
 
                             ui.with_layout(egui::Layout::right_to_left(egui::Align::TOP), |ui| {
-                                if self.active_tab == SettingsTab::Hotkeys {
+                                let show_hotkey_help = matches!(
+                                    self.active_tab,
+                                    SettingsTab::Hotkeys | SettingsTab::AppRules
+                                );
+                                if show_hotkey_help {
                                     hotkey_help_popup(ui);
                                 }
 
                                 if let Some(err) = &self.error {
-                                    if self.active_tab == SettingsTab::Hotkeys {
+                                    if show_hotkey_help {
                                         ui.add_space(8.0);
                                     }
                                     badge(ui, err.clone(), ERROR);
                                 } else if let Some(status) = &self.status {
-                                    if self.active_tab == SettingsTab::Hotkeys {
+                                    if show_hotkey_help {
                                         ui.add_space(8.0);
                                     }
                                     badge(ui, status.clone(), SUCCESS);
@@ -294,7 +299,7 @@ impl SettingsApp {
         section_card(
             ui,
             "Launch routing",
-            "When an app opens, move its main window to the chosen workspace and switch to it.",
+            "When an app opens, move its main window to the chosen workspace and switch to it. Launch hotkeys open or focus the configured executable.",
             |ui| {
                 if self.config.app_rules.is_empty() {
                     ui.vertical_centered(|ui| {
@@ -307,7 +312,7 @@ impl SettingsApp {
                         );
                         ui.label(
                             RichText::new(
-                                "Add an executable such as chrome.exe to route new windows.",
+                                "Add an executable path to route new windows and optionally bind a launch hotkey.",
                             )
                             .size(13.0)
                             .color(TEXT_MUTED),
@@ -325,7 +330,7 @@ impl SettingsApp {
                     let mut picker_actions = Vec::new();
 
                     egui::Grid::new("app_rules_grid")
-                        .num_columns(4)
+                        .num_columns(5)
                         .spacing([item_spacing, 4.0])
                         .show(ui, |ui| {
                             ui.add_sized(
@@ -336,6 +341,10 @@ impl SettingsApp {
                             ui.add_sized(
                                 [APP_RULE_WORKSPACE_WIDTH, row_height],
                                 egui::Label::new(column_header("Workspace")),
+                            );
+                            ui.add_sized(
+                                [APP_RULE_HOTKEY_WIDTH, row_height],
+                                egui::Label::new(column_header("Launch")),
                             );
                             ui.add_sized([APP_RULE_REMOVE_WIDTH, row_height], egui::Label::new(""));
                             ui.end_row();
@@ -353,7 +362,7 @@ impl SettingsApp {
                                                     .max(ui.spacing().interact_size.y),
                                             ],
                                             egui::TextEdit::singleline(&mut rule.executable)
-                                                .hint_text("chrome.exe"),
+                                                .hint_text(r"C:\Apps\app.exe"),
                                         );
                                     },
                                 );
@@ -366,6 +375,22 @@ impl SettingsApp {
                                     egui::DragValue::new(&mut rule.workspace)
                                         .range(WORKSPACE_INDEX_BASE..=99)
                                         .prefix("WS "),
+                                );
+                                ui.allocate_ui_with_layout(
+                                    Vec2::new(APP_RULE_HOTKEY_WIDTH, row_height),
+                                    egui::Layout::top_down(egui::Align::Min),
+                                    |ui| {
+                                        ui.add_space(APP_RULE_TEXT_FIELD_TOP_PADDING);
+                                        ui.add_sized(
+                                            [
+                                                ui.available_width(),
+                                                (row_height - APP_RULE_TEXT_FIELD_TOP_PADDING)
+                                                    .max(ui.spacing().interact_size.y),
+                                            ],
+                                            egui::TextEdit::singleline(&mut rule.launch_hotkey)
+                                                .hint_text("Win+Alt+C"),
+                                        );
+                                    },
                                 );
                                 if ui
                                     .add_sized(
@@ -414,6 +439,7 @@ impl SettingsApp {
                         self.config.app_rules.push(AppRule {
                             executable: String::new(),
                             workspace: WORKSPACE_INDEX_BASE,
+                            launch_hotkey: String::new(),
                         });
                     }
                 });
@@ -437,7 +463,7 @@ impl SettingsApp {
             .default_size([520.0, 420.0])
             .show(ctx, |ui| {
                 ui.label(
-                    RichText::new("Choose a window to use its executable name.").color(TEXT_MUTED),
+                    RichText::new("Choose a window to use its executable path.").color(TEXT_MUTED),
                 );
                 ui.add_space(8.0);
 
@@ -450,7 +476,7 @@ impl SettingsApp {
                             for window in windows {
                                 let label = format!("{} — {}", window.title, window.executable);
                                 if ui.selectable_label(false, label).clicked() {
-                                    selected_executable = Some(window.executable);
+                                    selected_executable = Some(window.full_path);
                                 }
                             }
                         });
@@ -643,6 +669,7 @@ fn column_header(text: &str) -> RichText {
 fn app_rule_executable_width(row_width: f32, item_spacing: f32) -> f32 {
     let fixed = APP_RULE_BROWSE_WIDTH
         + APP_RULE_WORKSPACE_WIDTH
+        + APP_RULE_HOTKEY_WIDTH
         + APP_RULE_REMOVE_WIDTH
         + item_spacing * (APP_RULE_ROW_COLUMNS - 1.0);
     (row_width - fixed).max(120.0)

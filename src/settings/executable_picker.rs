@@ -1,5 +1,4 @@
 use std::mem::size_of;
-use std::path::Path;
 
 use windows::core::PWSTR;
 use windows::Win32::Foundation::{BOOL, HWND, LPARAM};
@@ -11,12 +10,13 @@ use windows::Win32::UI::WindowsAndMessaging::{
     EnumWindows, GetWindowTextW, GetWindowThreadProcessId,
 };
 
-use crate::window_tracking::{executable_for_hwnd, is_main_window};
+use crate::window_tracking::{executable_for_hwnd, full_process_image_path_for_hwnd, is_main_window};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PickableWindow {
     pub title: String,
     pub executable: String,
+    pub full_path: String,
 }
 
 pub fn list_pickable_windows() -> Vec<PickableWindow> {
@@ -57,10 +57,8 @@ pub fn pick_executable_file() -> Option<String> {
 
         let path = String::from_utf16_lossy(&file);
         let path = path.trim_end_matches('\0');
-        Path::new(path)
-            .file_name()
-            .and_then(|name| name.to_str())
-            .map(str::to_owned)
+        let path = path.trim();
+        (!path.is_empty()).then(|| path.to_owned())
     }
 }
 
@@ -77,8 +75,13 @@ unsafe extern "system" fn collect_pickable_window(hwnd: HWND, lparam: LPARAM) ->
         return BOOL(1);
     }
 
+    let full_path = full_process_image_path_for_hwnd(hwnd.0 as isize).unwrap_or_else(|| executable.clone());
     let title = window_title(hwnd).unwrap_or_else(|| "(Untitled)".into());
-    windows.push(PickableWindow { title, executable });
+    windows.push(PickableWindow {
+        title,
+        executable,
+        full_path,
+    });
     BOOL(1)
 }
 
