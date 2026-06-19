@@ -6,6 +6,7 @@ use winvd::{DesktopEvent, DesktopEventThread};
 mod focus;
 
 pub const WORKSPACE_INDEX_BASE: u32 = 1;
+pub const MAX_WORKSPACES: u32 = 15;
 
 #[derive(Debug, Error)]
 pub enum VirtualDesktopError {
@@ -15,6 +16,10 @@ pub enum VirtualDesktopError {
     InvalidIndex { index: u32, min: u32, max: u32 },
     #[error("no focused window")]
     NoFocusedWindow,
+    #[error("cannot remove the last workspace")]
+    LastWorkspace,
+    #[error("maximum of {max} workspaces allowed")]
+    MaxWorkspaces { max: u32 },
 }
 
 impl From<winvd::Error> for VirtualDesktopError {
@@ -97,6 +102,39 @@ pub fn listen_events(
     sender: crossbeam_channel::Sender<DesktopEvent>,
 ) -> Result<DesktopEventThread, VirtualDesktopError> {
     Ok(winvd::listen_desktop_events(sender)?)
+}
+
+pub fn add_workspace() -> Result<u32, VirtualDesktopError> {
+    let count = workspace_count()?;
+    if count >= MAX_WORKSPACES {
+        return Err(VirtualDesktopError::MaxWorkspaces {
+            max: MAX_WORKSPACES,
+        });
+    }
+
+    let desktop = winvd::create_desktop()?;
+    let index = desktop.get_index()? + WORKSPACE_INDEX_BASE;
+    debug!("created workspace {index}");
+    switch_to_workspace(index)?;
+    Ok(index)
+}
+
+pub fn remove_current_workspace() -> Result<(), VirtualDesktopError> {
+    let count = workspace_count()?;
+    if count <= WORKSPACE_INDEX_BASE {
+        return Err(VirtualDesktopError::LastWorkspace);
+    }
+
+    let current = winvd::get_current_desktop()?;
+    let current_zero = current.get_index()?;
+    let fallback_zero = if current_zero == 0 { 1 } else { current_zero - 1 };
+
+    debug!(
+        "removing workspace {} (fallback api index {fallback_zero})",
+        current_zero + WORKSPACE_INDEX_BASE
+    );
+    winvd::remove_desktop(current_zero, fallback_zero)?;
+    Ok(())
 }
 
 fn validate_index(index: u32) -> Result<(), VirtualDesktopError> {

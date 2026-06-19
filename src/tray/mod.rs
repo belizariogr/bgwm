@@ -6,9 +6,11 @@ use thiserror::Error;
 use tray_icon::menu::{Menu, MenuEvent, MenuId, MenuItem, PredefinedMenuItem};
 use tray_icon::{TrayIcon, TrayIconBuilder, TrayIconEvent};
 
-use crate::virtual_desktop::WORKSPACE_INDEX_BASE;
+use crate::virtual_desktop::{MAX_WORKSPACES, WORKSPACE_INDEX_BASE};
 
 const MENU_PREFIX_WS: &str = "ws:";
+const MENU_ADD_WORKSPACE: &str = "add-workspace";
+const MENU_REMOVE_WORKSPACE: &str = "remove-workspace";
 const MENU_SETTINGS: &str = "settings";
 const MENU_EXIT: &str = "exit";
 
@@ -103,6 +105,27 @@ fn build_menu(
     menu.append(&PredefinedMenuItem::separator())
         .map_err(|e| TrayError::Menu(e.to_string()))?;
 
+    let add_workspace = MenuItem::with_id(
+        MENU_ADD_WORKSPACE,
+        "Add workspace",
+        workspace_count < MAX_WORKSPACES,
+        None,
+    );
+    menu.append(&add_workspace)
+        .map_err(|e| TrayError::Menu(e.to_string()))?;
+
+    let remove_workspace = MenuItem::with_id(
+        MENU_REMOVE_WORKSPACE,
+        "Remove current workspace",
+        workspace_count > WORKSPACE_INDEX_BASE,
+        None,
+    );
+    menu.append(&remove_workspace)
+        .map_err(|e| TrayError::Menu(e.to_string()))?;
+
+    menu.append(&PredefinedMenuItem::separator())
+        .map_err(|e| TrayError::Menu(e.to_string()))?;
+
     let settings = MenuItem::with_id(MENU_SETTINGS, "Settings", true, None);
     menu.append(&settings)
         .map_err(|e| TrayError::Menu(e.to_string()))?;
@@ -142,4 +165,12 @@ pub fn is_settings_menu(id: &MenuId) -> bool {
 
 pub fn is_exit_menu(id: &MenuId) -> bool {
     id.0 == MENU_EXIT
+}
+
+pub fn is_add_workspace_menu(id: &MenuId) -> bool {
+    id.0 == MENU_ADD_WORKSPACE
+}
+
+pub fn is_remove_workspace_menu(id: &MenuId) -> bool {
+    id.0 == MENU_REMOVE_WORKSPACE
 }

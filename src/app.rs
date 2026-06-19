@@ -14,7 +14,10 @@ use crate::config::{self, matches_executable, Config};
 use crate::hotkeys::{HotkeyAction, HotkeyEngine, HotkeyEvent};
 use crate::process_job::ChildProcessJob;
 use crate::settings;
-use crate::tray::{is_exit_menu, is_settings_menu, menu_workspace_from_id, TrayController};
+use crate::tray::{
+    is_add_workspace_menu, is_exit_menu, is_remove_workspace_menu, is_settings_menu,
+    menu_workspace_from_id, TrayController,
+};
 use crate::virtual_desktop::{self, WORKSPACE_INDEX_BASE};
 use crate::window_tracking::{
     existing_main_window_pids, find_main_window_for_executable, is_window_valid,
@@ -274,6 +277,7 @@ impl BgwmApp {
                 if let Some(tray) = &mut self.tray {
                     let _ = tray.rebuild_menu(count, self.current_workspace);
                 }
+                self.reload_hotkeys();
             }
         }
     }
@@ -524,6 +528,18 @@ impl ApplicationHandler<UserEvent> for BgwmApp {
                 }
                 if is_settings_menu(&id) {
                     self.open_settings();
+                    return;
+                }
+                if is_add_workspace_menu(&id) {
+                    if let Err(e) = virtual_desktop::add_workspace() {
+                        warn!("add workspace failed: {e}");
+                    }
+                    return;
+                }
+                if is_remove_workspace_menu(&id) {
+                    if let Err(e) = virtual_desktop::remove_current_workspace() {
+                        warn!("remove workspace failed: {e}");
+                    }
                     return;
                 }
                 if let Some(ws) = menu_workspace_from_id(&id) {
