@@ -1,6 +1,15 @@
 use std::path::PathBuf;
 use std::sync::OnceLock;
+
 use tray_icon::Icon;
+use windows::core::PCWSTR;
+use windows::Win32::Foundation::ERROR_SUCCESS;
+use windows::Win32::System::Registry::{
+    RegCloseKey, RegOpenKeyExW, RegQueryValueExW, HKEY, HKEY_CURRENT_USER, KEY_READ, REG_DWORD,
+};
+
+const PERSONALIZE_KEY: &str = r"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize";
+const SYSTEM_USES_LIGHT_THEME: &str = "SystemUsesLightTheme";
 
 type RgbaIcon = (u32, u32, Vec<u8>);
 
@@ -67,6 +76,10 @@ fn compose_workspace_icon(workspace: u32, assets: &TrayAssets) -> RgbaIcon {
         .collect();
 
     let (canvas_w, canvas_h, mut canvas) = assets.border.clone();
+    let invert_colors = system_uses_light_theme();
+    if invert_colors {
+        invert_opaque_pixels(&mut canvas);
+    }
     if digit_indices.is_empty() {
         return (canvas_w, canvas_h, canvas);
     }
@@ -97,7 +110,16 @@ fn compose_workspace_icon(workspace: u32, assets: &TrayAssets) -> RgbaIcon {
     for (idx, glyph) in glyphs.iter().enumerate() {
         let dst_x = cursor_x - glyph.bbox.x0 as f32 * scale;
         let dst_y = base_y - glyph.bbox.y0 as f32 * scale;
-        blit_digit_scaled(&mut canvas, canvas_w, canvas_h, glyph, dst_x, dst_y, scale);
+        blit_digit_scaled(
+            &mut canvas,
+            canvas_w,
+            canvas_h,
+            glyph,
+            dst_x,
+            dst_y,
+            scale,
+            invert_colors,
+        );
 
         if idx + 1 < glyphs.len() {
             cursor_x += glyph.bbox.width() as f32 * scale;
@@ -108,6 +130,65 @@ fn compose_workspace_icon(workspace: u32, assets: &TrayAssets) -> RgbaIcon {
     (canvas_w, canvas_h, canvas)
 }
 
+fn system_uses_light_theme() -> bool {
+    read_personalize_dword(SYSTEM_USES_LIGHT_THEME).is_some_and(|value| value != 0)
+}
+
+fn read_personalize_dword(value_name: &str) -> Option<u32> {
+    unsafe {
+        let subkey = wide_null(PERSONALIZE_KEY);
+        let value_name = wide_null(value_name);
+        let mut key = HKEY::default();
+        if RegOpenKeyExW(
+            HKEY_CURRENT_USER,
+            PCWSTR(subkey.as_ptr()),
+            0,
+            KEY_READ,
+            &mut key,
+        ) != ERROR_SUCCESS
+        {
+            return None;
+        }
+
+        let mut data = 0u32;
+        let mut data_size = std::mem::size_of::<u32>() as u32;
+        let mut value_type = REG_DWORD;
+        let query_result = RegQueryValueExW(
+            key,
+            PCWSTR(value_name.as_ptr()),
+            None,
+            Some(&mut value_type),
+            Some(std::ptr::from_mut(&mut data).cast()),
+            Some(&mut data_size),
+        );
+        let _ = RegCloseKey(key);
+
+        if query_result == ERROR_SUCCESS && value_type == REG_DWORD {
+            Some(data)
+        } else {
+            None
+        }
+    }
+}
+
+fn invert_rgba(rgba: &[u8; 4]) -> [u8; 4] {
+    [255 - rgba[0], 255 - rgba[1], 255 - rgba[2], rgba[3]]
+}
+
+fn invert_opaque_pixels(rgba: &mut [u8]) {
+    for chunk in rgba.chunks_exact_mut(4) {
+        if chunk[3] > 0 {
+            chunk[0] = 255 - chunk[0];
+            chunk[1] = 255 - chunk[1];
+            chunk[2] = 255 - chunk[2];
+        }
+    }
+}
+
+fn wide_null(value: &str) -> Vec<u16> {
+    value.encode_utf16().chain(std::iter::once(0)).collect()
+}
+
 fn blit_digit_scaled(
     canvas: &mut [u8],
     canvas_w: u32,
@@ -116,6 +197,7 @@ fn blit_digit_scaled(
     dst_x: f32,
     dst_y: f32,
     scale: f32,
+    invert_colors: bool,
 ) {
     let src_w = digit.width as i32;
     let src_h = digit.height as i32;
@@ -123,9 +205,17 @@ fn blit_digit_scaled(
     for sy in 0..src_h {
         for sx in 0..src_w {
             let src_idx = ((sy * src_w + sx) * 4) as usize;
-            let alpha = digit.rgba[src_idx + 3];
-            if alpha == 0 {
+            let mut pixel = [
+                digit.rgba[src_idx],
+                digit.rgba[src_idx + 1],
+                digit.rgba[src_idx + 2],
+                digit.rgba[src_idx + 3],
+            ];
+            if pixel[3] == 0 {
                 continue;
+            }
+            if invert_colors {
+                pixel = invert_rgba(&pixel);
             }
 
             let px = dst_x + sx as f32 * scale;
@@ -137,7 +227,7 @@ fn blit_digit_scaled(
                     canvas_h,
                     px.round() as i32,
                     py.round() as i32,
-                    &digit.rgba[src_idx..src_idx + 4],
+                    &pixel,
                 );
             } else {
                 blit_pixel(
@@ -146,7 +236,7 @@ fn blit_digit_scaled(
                     canvas_h,
                     px.floor() as i32,
                     py.floor() as i32,
-                    &digit.rgba[src_idx..src_idx + 4],
+                    &pixel,
                 );
             }
         }
@@ -311,6 +401,11 @@ mod tests {
     #[test]
     fn workspace_icon_builds_for_two_digits() {
         workspace_icon(12).expect("icon for workspace 12 should build");
+    }
+
+    #[test]
+    fn invert_rgba_flips_rgb_and_preserves_alpha() {
+        assert_eq!(invert_rgba(&[200, 100, 50, 128]), [55, 155, 205, 128]);
     }
 
     #[test]
