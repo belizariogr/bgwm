@@ -219,10 +219,31 @@ impl SettingsApp {
     }
 
     fn draw_hotkeys_tab(&mut self, ui: &mut egui::Ui) {
-        section_card(
+        let can_add = self.workspace_count < virtual_desktop::MAX_WORKSPACES;
+        let mut add_clicked = false;
+        section_card_with_action(
             ui,
             "Workspace hotkeys",
             "Switch jumps to a desktop. Move relocates the focused window and switches to it.",
+            |ui| {
+                let response = ui
+                    .add_enabled(
+                        can_add,
+                        egui::Button::new(
+                            RichText::new("+ Add workspace").strong().color(if can_add {
+                                Color32::WHITE
+                            } else {
+                                TEXT_MUTED
+                            }),
+                        )
+                        .fill(SURFACE_ELEVATED)
+                        .stroke(Stroke::new(1.0, BORDER)),
+                    )
+                    .on_hover_text("Create a new virtual desktop");
+                if response.clicked() {
+                    add_clicked = true;
+                }
+            },
             |ui| {
                 let row_width = ui.available_width();
                 let item_spacing = ui.spacing().item_spacing.x;
@@ -353,6 +374,21 @@ impl SettingsApp {
                 }
             },
         );
+
+        if add_clicked {
+            match virtual_desktop::add_workspace_without_switch() {
+                Ok(index) => {
+                    self.workspace_count =
+                        virtual_desktop::workspace_count().unwrap_or(self.workspace_count);
+                    self.status = Some(format!("Added workspace {index}"));
+                    self.error = None;
+                }
+                Err(e) => {
+                    self.error = Some(e.to_string());
+                    self.status = None;
+                }
+            }
+        }
     }
 
     fn draw_app_rules_tab(&mut self, ui: &mut egui::Ui) {
@@ -700,18 +736,33 @@ fn section_card(
     subtitle: &str,
     add_contents: impl FnOnce(&mut egui::Ui),
 ) {
+    section_card_with_action(ui, title, subtitle, |_| {}, add_contents);
+}
+
+fn section_card_with_action<R>(
+    ui: &mut egui::Ui,
+    title: &str,
+    subtitle: &str,
+    header_action: impl FnOnce(&mut egui::Ui),
+    add_contents: impl FnOnce(&mut egui::Ui) -> R,
+) -> R {
     egui::Frame::new()
         .fill(SURFACE)
         .stroke(Stroke::new(1.0, BORDER))
         .corner_radius(CornerRadius::same(12))
         .inner_margin(Margin::same(18))
         .show(ui, |ui| {
-            ui.label(
-                RichText::new(title)
-                    .size(17.0)
-                    .strong()
-                    .color(Color32::WHITE),
-            );
+            ui.horizontal(|ui| {
+                ui.label(
+                    RichText::new(title)
+                        .size(17.0)
+                        .strong()
+                        .color(Color32::WHITE),
+                );
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    header_action(ui);
+                });
+            });
             if !subtitle.is_empty() {
                 ui.add_space(4.0);
                 ui.label(RichText::new(subtitle).size(14.0).color(TEXT_MUTED));
@@ -721,8 +772,9 @@ fn section_card(
             }
             ui.separator();
             ui.add_space(12.0);
-            add_contents(ui);
-        });
+            add_contents(ui)
+        })
+        .inner
 }
 
 fn tab_button(ui: &mut egui::Ui, active: &mut SettingsTab, tab: SettingsTab, label: &str) {

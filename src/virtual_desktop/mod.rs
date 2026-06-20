@@ -105,6 +105,14 @@ pub fn listen_events(
 }
 
 pub fn add_workspace() -> Result<u32, VirtualDesktopError> {
+    create_workspace(true)
+}
+
+pub fn add_workspace_without_switch() -> Result<u32, VirtualDesktopError> {
+    create_workspace(false)
+}
+
+fn create_workspace(switch: bool) -> Result<u32, VirtualDesktopError> {
     let count = workspace_count()?;
     if count >= MAX_WORKSPACES {
         return Err(VirtualDesktopError::MaxWorkspaces {
@@ -114,9 +122,11 @@ pub fn add_workspace() -> Result<u32, VirtualDesktopError> {
 
     let desktop = winvd::create_desktop()?;
     let index = desktop.get_index()? + WORKSPACE_INDEX_BASE;
-    debug!("created workspace {index}");
-    focus::allow_foreground_from_background();
-    winvd::switch_desktop(desktop)?;
+    debug!("created workspace {index} (switch={switch})");
+    if switch {
+        focus::allow_foreground_from_background();
+        winvd::switch_desktop(desktop)?;
+    }
     Ok(index)
 }
 
