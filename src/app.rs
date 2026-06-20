@@ -261,6 +261,16 @@ impl BgwmApp {
             return;
         }
 
+        if let Some(workspace) = workspace {
+            if self.current_workspace != workspace {
+                if let Err(e) = virtual_desktop::switch_to_workspace(workspace) {
+                    warn!(
+                        "failed to switch to workspace {workspace} before launching {executable}: {e}"
+                    );
+                }
+            }
+        }
+
         match std::process::Command::new(executable).spawn() {
             Ok(_) => info!("launched {executable}"),
             Err(e) => warn!("failed to launch {executable}: {e}"),
