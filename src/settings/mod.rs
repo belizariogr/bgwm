@@ -18,6 +18,9 @@ const APP_RULE_BROWSE_WIDTH: f32 = 32.0;
 const APP_RULE_ROW_COLUMNS: f32 = 5.0;
 const APP_RULE_TEXT_FIELD_TOP_PADDING: f32 = 8.0;
 const EXECUTABLE_PICKER_POPUP_WIDTH: f32 = 250.0;
+const HOTKEY_WORKSPACE_WIDTH: f32 = 140.0;
+const HOTKEY_ROW_COLUMNS: f32 = 3.0;
+const HOTKEY_TEXT_FIELD_TOP_PADDING: f32 = 8.0;
 
 mod executable_picker;
 
@@ -203,96 +206,87 @@ impl SettingsApp {
     fn draw_hotkeys_tab(&mut self, ui: &mut egui::Ui) {
         section_card(
             ui,
-            "Switch workspace",
-            "Press a hotkey to jump to a virtual desktop. Example: Win+2",
+            "Workspace hotkeys",
+            "Switch jumps to a desktop. Move relocates the focused window and switches to it.",
             |ui| {
-                egui::Grid::new("switch_hotkeys_grid")
-                    .num_columns(2)
-                    .spacing([20.0, 10.0])
-                    .min_col_width(120.0)
+                let row_width = ui.available_width();
+                let item_spacing = ui.spacing().item_spacing.x;
+                let row_height = ui.spacing().interact_size.y;
+                let binding_width = hotkey_binding_width(row_width, item_spacing);
+
+                egui::Grid::new("workspace_hotkeys_grid")
+                    .num_columns(3)
+                    .spacing([item_spacing, 4.0])
                     .striped(true)
                     .show(ui, |ui| {
-                        ui.label(column_header("Workspace"));
-                        ui.label(column_header("Hotkey"));
+                        ui.add_sized(
+                            [HOTKEY_WORKSPACE_WIDTH, row_height],
+                            egui::Label::new(column_header("Workspace")),
+                        );
+                        ui.add_sized(
+                            [binding_width, row_height],
+                            egui::Label::new(column_header("Switch")),
+                        );
+                        ui.add_sized(
+                            [binding_width, row_height],
+                            egui::Label::new(column_header("Move")),
+                        );
                         ui.end_row();
 
                         for ws in
                             WORKSPACE_INDEX_BASE..=self.workspace_count.max(WORKSPACE_INDEX_BASE)
                         {
                             let key = ws.to_string();
-                            let binding = self
+
+                            ui.add_sized(
+                                [HOTKEY_WORKSPACE_WIDTH, row_height],
+                                egui::Label::new(
+                                    RichText::new(format!("Workspace {ws}")).color(Color32::WHITE),
+                                ),
+                            );
+
+                            let switch_binding = self
                                 .config
                                 .switch_hotkeys
                                 .get(&key)
                                 .cloned()
                                 .unwrap_or_default();
-
-                            ui.label(
-                                RichText::new(format!("Workspace {ws}")).color(Color32::WHITE),
+                            hotkey_binding_field(
+                                ui,
+                                binding_width,
+                                row_height,
+                                switch_binding,
+                                "e.g. Win+2",
+                                |text| {
+                                    if text.trim().is_empty() {
+                                        self.config.switch_hotkeys.remove(&key);
+                                    } else {
+                                        self.config.switch_hotkeys.insert(key.clone(), text);
+                                    }
+                                },
                             );
-                            let mut text = binding;
-                            let response = ui.add(
-                                egui::TextEdit::singleline(&mut text)
-                                    .desired_width(ui.available_width())
-                                    .hint_text("e.g. Win+2"),
-                            );
-                            if response.changed() {
-                                if text.trim().is_empty() {
-                                    self.config.switch_hotkeys.remove(&key);
-                                } else {
-                                    self.config.switch_hotkeys.insert(key.clone(), text);
-                                }
-                            }
-                            ui.end_row();
-                        }
-                    });
-            },
-        );
 
-        ui.add_space(16.0);
-
-        section_card(
-            ui,
-            "Move focused window",
-            "Move the active window to a workspace and switch to it. Example: Win+Shift+2",
-            |ui| {
-                egui::Grid::new("move_hotkeys_grid")
-                    .num_columns(2)
-                    .spacing([20.0, 10.0])
-                    .min_col_width(120.0)
-                    .striped(true)
-                    .show(ui, |ui| {
-                        ui.label(column_header("Workspace"));
-                        ui.label(column_header("Hotkey"));
-                        ui.end_row();
-
-                        for ws in
-                            WORKSPACE_INDEX_BASE..=self.workspace_count.max(WORKSPACE_INDEX_BASE)
-                        {
-                            let key = ws.to_string();
-                            let binding = self
+                            let move_binding = self
                                 .config
                                 .move_hotkeys
                                 .get(&key)
                                 .cloned()
                                 .unwrap_or_default();
+                            hotkey_binding_field(
+                                ui,
+                                binding_width,
+                                row_height,
+                                move_binding,
+                                "e.g. Win+Shift+2",
+                                |text| {
+                                    if text.trim().is_empty() {
+                                        self.config.move_hotkeys.remove(&key);
+                                    } else {
+                                        self.config.move_hotkeys.insert(key.clone(), text);
+                                    }
+                                },
+                            );
 
-                            ui.label(
-                                RichText::new(format!("Workspace {ws}")).color(Color32::WHITE),
-                            );
-                            let mut text = binding;
-                            let response = ui.add(
-                                egui::TextEdit::singleline(&mut text)
-                                    .desired_width(ui.available_width())
-                                    .hint_text("e.g. Win+Shift+2"),
-                            );
-                            if response.changed() {
-                                if text.trim().is_empty() {
-                                    self.config.move_hotkeys.remove(&key);
-                                } else {
-                                    self.config.move_hotkeys.insert(key.clone(), text);
-                                }
-                            }
                             ui.end_row();
                         }
                     });
@@ -733,6 +727,39 @@ fn app_rule_executable_width(row_width: f32, item_spacing: f32) -> f32 {
         + APP_RULE_REMOVE_WIDTH
         + item_spacing * (APP_RULE_ROW_COLUMNS - 1.0);
     (row_width - fixed).max(120.0)
+}
+
+fn hotkey_binding_width(row_width: f32, item_spacing: f32) -> f32 {
+    let fixed = HOTKEY_WORKSPACE_WIDTH + item_spacing * (HOTKEY_ROW_COLUMNS - 1.0);
+    ((row_width - fixed) / 2.0).max(120.0)
+}
+
+fn hotkey_binding_field(
+    ui: &mut egui::Ui,
+    width: f32,
+    row_height: f32,
+    binding: String,
+    hint: &str,
+    on_change: impl FnOnce(String),
+) {
+    ui.allocate_ui_with_layout(
+        Vec2::new(width, row_height),
+        egui::Layout::top_down(egui::Align::Min),
+        |ui| {
+            ui.add_space(HOTKEY_TEXT_FIELD_TOP_PADDING);
+            let mut text = binding;
+            let response = ui.add_sized(
+                [
+                    ui.available_width(),
+                    (row_height - HOTKEY_TEXT_FIELD_TOP_PADDING).max(ui.spacing().interact_size.y),
+                ],
+                egui::TextEdit::singleline(&mut text).hint_text(hint),
+            );
+            if response.changed() {
+                on_change(text);
+            }
+        },
+    );
 }
 
 fn executable_picker_button(
