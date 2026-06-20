@@ -24,6 +24,7 @@ const GRID_ROW_HEIGHT: f32 = 44.0;
 const APP_RULE_ROW_HEIGHT: f32 = GRID_ROW_HEIGHT;
 /// Square size of the trash/delete button.
 const APP_RULE_DELETE_BUTTON_SIZE: f32 = 30.0;
+const APP_RULE_BROWSE_BUTTON_PADDING: Vec2 = Vec2::new(6.0, 3.0);
 /// Gap between the delete button and the right edge of the row.
 const APP_RULE_DELETE_TRAILING_PAD: f32 = 6.0;
 const EXECUTABLE_PICKER_POPUP_WIDTH: f32 = 250.0;
@@ -478,7 +479,7 @@ impl SettingsApp {
                                 });
                                 let browse_size = Vec2::splat(APP_RULE_DELETE_BUTTON_SIZE);
                                 if let Some(action) =
-                                    app_rule_centered_cell(ui, APP_RULE_BROWSE_WIDTH, |ui| {
+                                    app_rule_centered_cell(ui, APP_RULE_DELETE_BUTTON_SIZE, |ui| {
                                         executable_picker_button(ui, idx, browse_size)
                                     })
                                 {
@@ -912,14 +913,17 @@ fn executable_picker_button(
     size: Vec2,
 ) -> Option<ExecutablePickerAction> {
     let popup_id = ui.id().with(("exe_picker", rule_idx));
+    let prev_padding = ui.spacing().button_padding;
+    ui.spacing_mut().button_padding = APP_RULE_BROWSE_BUTTON_PADDING;
     let response = ui
         .add(
-            egui::Button::new(RichText::new("…").size(17.0).color(ACCENT))
+            egui::Button::new(RichText::new("...").size(16.0).color(ACCENT).strong())
                 .fill(SURFACE_ELEVATED)
                 .stroke(Stroke::new(1.0, BORDER))
                 .min_size(size),
         )
         .on_hover_text("Select executable");
+    ui.spacing_mut().button_padding = prev_padding;
 
     if response.clicked() {
         ui.memory_mut(|mem| mem.toggle_popup(popup_id));
