@@ -18,8 +18,10 @@ const APP_RULE_BROWSE_WIDTH: f32 = 32.0;
 const APP_RULE_ROW_COLUMNS: f32 = 5.0;
 /// Height of input controls inside an app-rule row.
 const APP_RULE_FIELD_HEIGHT: f32 = 26.0;
+/// Shared row height for the Hotkeys and App rules grids so both tabs match.
+const GRID_ROW_HEIGHT: f32 = 44.0;
 /// Taller row so the delete button fits comfortably.
-const APP_RULE_ROW_HEIGHT: f32 = 44.0;
+const APP_RULE_ROW_HEIGHT: f32 = GRID_ROW_HEIGHT;
 /// Square size of the trash/delete button.
 const APP_RULE_DELETE_BUTTON_SIZE: f32 = 30.0;
 /// Gap between the delete button and the right edge of the row.
@@ -107,6 +109,9 @@ impl eframe::App for SettingsApp {
             .show(ctx, |ui| {
                 let viewport = ui.available_size();
                 egui::ScrollArea::vertical()
+                    .scroll_bar_visibility(
+                        egui::scroll_area::ScrollBarVisibility::AlwaysVisible,
+                    )
                     .auto_shrink([false; 2])
                     .show(ui, |ui| {
                         ui.set_min_size(viewport);
@@ -247,8 +252,7 @@ impl SettingsApp {
             |ui| {
                 let row_width = ui.available_width();
                 let item_spacing = ui.spacing().item_spacing.x;
-                let row_height =
-                    ui.spacing().interact_size.y + (HOTKEY_ROW_VERTICAL_PADDING as f32) * 2.0;
+                let row_height = GRID_ROW_HEIGHT;
                 let binding_width = hotkey_binding_width(row_width, item_spacing);
                 let can_remove =
                     self.workspace_count.max(WORKSPACE_INDEX_BASE) > WORKSPACE_INDEX_BASE;
@@ -258,6 +262,7 @@ impl SettingsApp {
                 egui::Grid::new("workspace_hotkeys_grid_v2")
                     .num_columns(4)
                     .spacing([item_spacing, 4.0])
+                    .min_col_width(0.0)
                     .min_row_height(row_height)
                     .striped(true)
                     .show(ui, |ui| {
@@ -443,6 +448,7 @@ impl SettingsApp {
                     egui::Grid::new("app_rules_grid")
                         .num_columns(5)
                         .spacing([item_spacing, 4.0])
+                        .min_col_width(0.0)
                         .min_row_height(APP_RULE_ROW_HEIGHT)
                         .striped(true)
                         .show(ui, |ui| {
