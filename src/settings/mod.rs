@@ -428,6 +428,7 @@ impl SettingsApp {
                         .num_columns(5)
                         .spacing([item_spacing, 4.0])
                         .min_row_height(APP_RULE_ROW_HEIGHT)
+                        .striped(true)
                         .show(ui, |ui| {
                             ui.add_sized(
                                 [field_width, row_height],
@@ -506,18 +507,15 @@ impl SettingsApp {
                                     |ui| {
                                         ui.add_space(APP_RULE_DELETE_TRAILING_PAD);
                                         if ui
-                                            .add_sized(
-                                                [
-                                                    APP_RULE_DELETE_BUTTON_SIZE,
-                                                    APP_RULE_DELETE_BUTTON_SIZE,
-                                                ],
+                                            .add(
                                                 egui::Button::new(
                                                     RichText::new("\u{1F5D1}")
                                                         .size(16.0)
                                                         .color(ERROR),
                                                 )
                                                 .fill(Color32::TRANSPARENT)
-                                                .stroke(Stroke::new(1.0, BORDER)),
+                                                .stroke(Stroke::new(1.0, BORDER))
+                                                .min_size(Vec2::splat(APP_RULE_DELETE_BUTTON_SIZE)),
                                             )
                                             .on_hover_text("Delete rule")
                                             .clicked()
@@ -831,17 +829,13 @@ fn app_rule_centered_cell<R>(
     width: f32,
     add_contents: impl FnOnce(&mut egui::Ui) -> R,
 ) -> R {
-    let top_pad = ((APP_RULE_ROW_HEIGHT - APP_RULE_FIELD_HEIGHT) * 0.5).max(0.0);
-    let mut result = None;
-    ui.allocate_ui_with_layout(
-        Vec2::new(width, APP_RULE_ROW_HEIGHT),
-        egui::Layout::top_down(egui::Align::Min),
-        |ui| {
-            ui.add_space(top_pad);
-            result = Some(add_contents(ui));
-        },
+    let (_id, rect) = ui.allocate_space(Vec2::new(width, APP_RULE_ROW_HEIGHT));
+    let mut child_ui = ui.new_child(
+        egui::UiBuilder::new()
+            .max_rect(rect)
+            .layout(egui::Layout::left_to_right(egui::Align::Center)),
     );
-    result.expect("add_contents always runs")
+    add_contents(&mut child_ui)
 }
 
 fn app_rule_executable_width(row_width: f32, item_spacing: f32) -> f32 {
@@ -908,11 +902,11 @@ fn executable_picker_button(
 ) -> Option<ExecutablePickerAction> {
     let popup_id = ui.id().with(("exe_picker", rule_idx));
     let response = ui
-        .add_sized(
-            size,
+        .add(
             egui::Button::new(RichText::new("…").size(17.0).color(ACCENT))
                 .fill(SURFACE_ELEVATED)
-                .stroke(Stroke::new(1.0, BORDER)),
+                .stroke(Stroke::new(1.0, BORDER))
+                .min_size(size),
         )
         .on_hover_text("Select executable");
 
