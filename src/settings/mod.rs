@@ -392,10 +392,26 @@ impl SettingsApp {
     }
 
     fn draw_app_rules_tab(&mut self, ui: &mut egui::Ui) {
-        section_card(
+        let mut add_clicked = false;
+        section_card_with_action(
             ui,
             "Launch routing",
             "Route new windows to a workspace, launch with a hotkey, or both. Leave workspace empty for launch-only rules.",
+            |ui| {
+                if ui
+                    .add(
+                        egui::Button::new(
+                            RichText::new("+ Add rule").strong().color(Color32::WHITE),
+                        )
+                        .fill(SURFACE_ELEVATED)
+                        .stroke(Stroke::new(1.0, BORDER)),
+                    )
+                    .on_hover_text("Add a new launch rule")
+                    .clicked()
+                {
+                    add_clicked = true;
+                }
+            },
             |ui| {
                 if self.config.app_rules.is_empty() {
                     ui.vertical_centered(|ui| {
@@ -454,8 +470,7 @@ impl SettingsApp {
                                             .hint_text(r"C:\Apps\app.exe"),
                                     );
                                 });
-                                let browse_size =
-                                    Vec2::new(APP_RULE_BROWSE_WIDTH, APP_RULE_FIELD_HEIGHT);
+                                let browse_size = Vec2::splat(APP_RULE_DELETE_BUTTON_SIZE);
                                 if let Some(action) =
                                     app_rule_centered_cell(ui, APP_RULE_BROWSE_WIDTH, |ui| {
                                         executable_picker_button(ui, idx, browse_size)
@@ -544,26 +559,16 @@ impl SettingsApp {
                         self.config.app_rules.remove(idx);
                     }
                 }
-
-                ui.add_space(12.0);
-                ui.horizontal(|ui| {
-                    if ui
-                        .add(
-                            egui::Button::new(RichText::new("+ Add rule").color(Color32::WHITE))
-                                .fill(SURFACE_ELEVATED)
-                                .stroke(Stroke::new(1.0, BORDER)),
-                        )
-                        .clicked()
-                    {
-                        self.config.app_rules.push(AppRule {
-                            executable: String::new(),
-                            workspace: None,
-                            launch_hotkey: String::new(),
-                        });
-                    }
-                });
             },
         );
+
+        if add_clicked {
+            self.config.app_rules.push(AppRule {
+                executable: String::new(),
+                workspace: None,
+                launch_hotkey: String::new(),
+            });
+        }
     }
 
     fn draw_window_picker(&mut self, ctx: &egui::Context) {
