@@ -32,7 +32,7 @@ const HOTKEY_WORKSPACE_WIDTH: f32 = 200.0;
 const HOTKEY_ROW_COLUMNS: f32 = 4.0;
 const HOTKEY_ROW_VERTICAL_PADDING: i8 = 10;
 /// Width reserved for the per-workspace delete button column.
-const HOTKEY_DELETE_WIDTH: f32 = 44.0;
+const HOTKEY_DELETE_WIDTH: f32 = 64.0;
 /// Square size of the workspace delete (trash) button.
 const HOTKEY_DELETE_BUTTON_SIZE: f32 = 30.0;
 /// Gap between the delete button and the right edge of the row.
@@ -519,7 +519,7 @@ impl SettingsApp {
                                     ui.add_sized(
                                         [ui.available_width(), APP_RULE_FIELD_HEIGHT],
                                         egui::TextEdit::singleline(&mut rule.launch_hotkey)
-                                            .hint_text("none")
+                                            .hint_text("e.g. Win+D")
                                             .horizontal_align(egui::Align::Center),
                                     );
                                 });
