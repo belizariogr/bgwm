@@ -5,6 +5,7 @@ use std::time::Duration;
 use tracing::debug;
 use windows::core::PCWSTR;
 use windows::Win32::Foundation::{BOOL, HWND, LPARAM};
+use windows::Win32::Graphics::Dwm::{DwmGetWindowAttribute, DWMWA_CLOAKED};
 use windows::Win32::System::Threading::{
     AttachThreadInput, GetCurrentProcessId, GetCurrentThreadId,
 };
@@ -130,10 +131,8 @@ fn is_focus_excluded(hwnd: HWND) -> bool {
 }
 
 fn is_focus_candidate(hwnd: HWND) -> bool {
-    unsafe {
-        if hwnd.0.is_null() || !IsWindow(hwnd).as_bool() || !IsWindowVisible(hwnd).as_bool() {
-            return false;
-        }
+    if !is_window_user_visible(hwnd) {
+        return false;
     }
 
     if is_own_process_window(hwnd) {
@@ -143,9 +142,29 @@ fn is_focus_candidate(hwnd: HWND) -> bool {
     is_main_window(hwnd)
 }
 
+/// Returns true when the window is on-screen and not hidden by DWM cloaking.
+/// Suspended UWP apps (e.g. Windows Settings with no UI open) keep a top-level
+/// HWND that still reports `IsWindowVisible == true` while cloaked.
+fn is_window_user_visible(hwnd: HWND) -> bool {
+    unsafe {
+        if hwnd.0.is_null() || !IsWindow(hwnd).as_bool() || !IsWindowVisible(hwnd).as_bool() {
+            return false;
+        }
+
+        let mut cloaked: u32 = 0;
+        let result = DwmGetWindowAttribute(
+            hwnd,
+            DWMWA_CLOAKED,
+            &mut cloaked as *mut u32 as *mut _,
+            std::mem::size_of::<u32>() as u32,
+        );
+        !(result.is_ok() && cloaked != 0)
+    }
+}
+
 fn activate_window(hwnd: HWND) -> bool {
     unsafe {
-        if hwnd.0.is_null() || !IsWindow(hwnd).as_bool() {
+        if !is_window_user_visible(hwnd) {
             return false;
         }
 
