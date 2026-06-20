@@ -21,6 +21,8 @@ const EXECUTABLE_PICKER_POPUP_WIDTH: f32 = 250.0;
 const HOTKEY_WORKSPACE_WIDTH: f32 = 200.0;
 const HOTKEY_ROW_COLUMNS: f32 = 3.0;
 const HOTKEY_ROW_VERTICAL_PADDING: i8 = 6;
+/// Vertical nudge for Switch/Move text fields within their row (pixels; negative = up, positive = down).
+const HOTKEY_BINDING_FIELD_Y_OFFSET: f32 = -1.0;
 
 mod executable_picker;
 
@@ -761,8 +763,10 @@ fn hotkey_binding_field(
     let field_height = ui.spacing().interact_size.y;
     hotkey_grid_cell(ui, Vec2::new(width, row_height), |ui| {
         let mut text = binding;
-        let response = ui.add_sized(
-            [width, field_height],
+        let inner = ui.available_rect_before_wrap();
+        let top = inner.center().y - field_height * 0.5 + HOTKEY_BINDING_FIELD_Y_OFFSET;
+        let response = ui.put(
+            egui::Rect::from_min_size(egui::pos2(inner.min.x, top), egui::vec2(width, field_height)),
             egui::TextEdit::singleline(&mut text).hint_text(hint),
         );
         if response.changed() {
