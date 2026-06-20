@@ -143,6 +143,26 @@ pub fn remove_current_workspace() -> Result<(), VirtualDesktopError> {
     Ok(())
 }
 
+pub fn remove_workspace(index: u32) -> Result<(), VirtualDesktopError> {
+    validate_index(index)?;
+    let count = workspace_count()?;
+    if count <= WORKSPACE_INDEX_BASE {
+        return Err(VirtualDesktopError::LastWorkspace);
+    }
+
+    let remove_zero = index - WORKSPACE_INDEX_BASE;
+    let fallback_zero = if remove_zero == 0 { 1 } else { remove_zero - 1 };
+    if fallback_zero == remove_zero || fallback_zero >= count {
+        return Err(VirtualDesktopError::Api(
+            "no valid fallback workspace for removal".into(),
+        ));
+    }
+
+    debug!("removing workspace {index} (fallback api index {fallback_zero})");
+    winvd::remove_desktop(remove_zero, fallback_zero)?;
+    Ok(())
+}
+
 fn validate_index(index: u32) -> Result<(), VirtualDesktopError> {
     if index < WORKSPACE_INDEX_BASE {
         return Err(VirtualDesktopError::InvalidIndex {

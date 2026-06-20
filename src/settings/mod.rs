@@ -13,14 +13,27 @@ use windows::Win32::UI::WindowsAndMessaging::FindWindowW;
 pub const SETTINGS_WINDOW_TITLE: &str = "BGWM Settings";
 const APP_RULE_WORKSPACE_WIDTH: f32 = 150.0;
 const APP_RULE_HOTKEY_WIDTH: f32 = 150.0;
-const APP_RULE_REMOVE_WIDTH: f32 = 72.0;
+const APP_RULE_REMOVE_WIDTH: f32 = 44.0;
 const APP_RULE_BROWSE_WIDTH: f32 = 32.0;
 const APP_RULE_ROW_COLUMNS: f32 = 5.0;
-const APP_RULE_TEXT_FIELD_TOP_PADDING: f32 = 8.0;
+/// Height of input controls inside an app-rule row.
+const APP_RULE_FIELD_HEIGHT: f32 = 26.0;
+/// Taller row so the delete button fits comfortably.
+const APP_RULE_ROW_HEIGHT: f32 = 44.0;
+/// Square size of the trash/delete button.
+const APP_RULE_DELETE_BUTTON_SIZE: f32 = 30.0;
+/// Gap between the delete button and the right edge of the row.
+const APP_RULE_DELETE_TRAILING_PAD: f32 = 6.0;
 const EXECUTABLE_PICKER_POPUP_WIDTH: f32 = 250.0;
 const HOTKEY_WORKSPACE_WIDTH: f32 = 200.0;
-const HOTKEY_ROW_COLUMNS: f32 = 3.0;
-const HOTKEY_ROW_VERTICAL_PADDING: i8 = 6;
+const HOTKEY_ROW_COLUMNS: f32 = 4.0;
+const HOTKEY_ROW_VERTICAL_PADDING: i8 = 10;
+/// Width reserved for the per-workspace delete button column.
+const HOTKEY_DELETE_WIDTH: f32 = 44.0;
+/// Square size of the workspace delete (trash) button.
+const HOTKEY_DELETE_BUTTON_SIZE: f32 = 30.0;
+/// Gap between the delete button and the right edge of the row.
+const HOTKEY_DELETE_TRAILING_PAD: f32 = 6.0;
 /// Vertical nudge for Switch/Move text fields within their row (pixels; negative = up, positive = down).
 const HOTKEY_BINDING_FIELD_Y_OFFSET: f32 = -1.0;
 
@@ -216,9 +229,13 @@ impl SettingsApp {
                 let row_height =
                     ui.spacing().interact_size.y + (HOTKEY_ROW_VERTICAL_PADDING as f32) * 2.0;
                 let binding_width = hotkey_binding_width(row_width, item_spacing);
+                let can_remove =
+                    self.workspace_count.max(WORKSPACE_INDEX_BASE) > WORKSPACE_INDEX_BASE;
+
+                let mut workspace_to_remove = None;
 
                 egui::Grid::new("workspace_hotkeys_grid_v2")
-                    .num_columns(3)
+                    .num_columns(4)
                     .spacing([item_spacing, 4.0])
                     .min_row_height(row_height)
                     .striped(true)
@@ -231,6 +248,9 @@ impl SettingsApp {
                         });
                         hotkey_grid_cell(ui, [binding_width, row_height], |ui| {
                             ui.label(column_header("Move"));
+                        });
+                        hotkey_grid_cell(ui, [HOTKEY_DELETE_WIDTH, row_height], |ui| {
+                            ui.label(column_header(""));
                         });
                         ui.end_row();
 
@@ -287,9 +307,50 @@ impl SettingsApp {
                                 },
                             );
 
+                            ui.allocate_ui_with_layout(
+                                Vec2::new(HOTKEY_DELETE_WIDTH, row_height),
+                                egui::Layout::right_to_left(egui::Align::Center),
+                                |ui| {
+                                    ui.add_space(HOTKEY_DELETE_TRAILING_PAD);
+                                    let button = egui::Button::new(
+                                        RichText::new("\u{1F5D1}").size(16.0).color(if can_remove {
+                                            ERROR
+                                        } else {
+                                            TEXT_MUTED
+                                        }),
+                                    )
+                                    .fill(Color32::TRANSPARENT)
+                                    .stroke(Stroke::new(1.0, BORDER));
+                                    let response = ui
+                                        .add_enabled(
+                                            can_remove,
+                                            button.min_size(Vec2::splat(HOTKEY_DELETE_BUTTON_SIZE)),
+                                        )
+                                        .on_hover_text("Delete workspace");
+                                    if response.clicked() {
+                                        workspace_to_remove = Some(ws);
+                                    }
+                                },
+                            );
+
                             ui.end_row();
                         }
                     });
+
+                if let Some(ws) = workspace_to_remove {
+                    match virtual_desktop::remove_workspace(ws) {
+                        Ok(()) => {
+                            self.workspace_count =
+                                virtual_desktop::workspace_count().unwrap_or(self.workspace_count);
+                            self.status = Some(format!("Removed workspace {ws}"));
+                            self.error = None;
+                        }
+                        Err(e) => {
+                            self.error = Some(e.to_string());
+                            self.status = None;
+                        }
+                    }
+                }
             },
         );
     }
@@ -321,9 +382,8 @@ impl SettingsApp {
                 } else {
                     let row_width = ui.available_width();
                     let item_spacing = ui.spacing().item_spacing.x;
-                    let row_height = ui.spacing().interact_size.y;
+                    let row_height = APP_RULE_ROW_HEIGHT;
                     let field_width = app_rule_executable_width(row_width, item_spacing);
-                    let browse_size = Vec2::new(APP_RULE_BROWSE_WIDTH, row_height);
 
                     let mut remove_idx = None;
                     let mut picker_actions = Vec::new();
@@ -331,6 +391,7 @@ impl SettingsApp {
                     egui::Grid::new("app_rules_grid")
                         .num_columns(5)
                         .spacing([item_spacing, 4.0])
+                        .min_row_height(APP_RULE_ROW_HEIGHT)
                         .show(ui, |ui| {
                             ui.add_sized(
                                 [field_width, row_height],
@@ -349,95 +410,86 @@ impl SettingsApp {
                             ui.end_row();
 
                             for (idx, rule) in self.config.app_rules.iter_mut().enumerate() {
-                                ui.allocate_ui_with_layout(
-                                    Vec2::new(field_width, row_height),
-                                    egui::Layout::top_down(egui::Align::Min),
-                                    |ui| {
-                                        ui.add_space(APP_RULE_TEXT_FIELD_TOP_PADDING);
-                                        ui.add_sized(
-                                            [
-                                                ui.available_width(),
-                                                (row_height - APP_RULE_TEXT_FIELD_TOP_PADDING)
-                                                    .max(ui.spacing().interact_size.y),
-                                            ],
-                                            egui::TextEdit::singleline(&mut rule.executable)
-                                                .hint_text(r"C:\Apps\app.exe"),
-                                        );
-                                    },
-                                );
-                                if let Some(action) = executable_picker_button(ui, idx, browse_size)
+                                app_rule_centered_cell(ui, field_width, |ui| {
+                                    ui.add_sized(
+                                        [ui.available_width(), APP_RULE_FIELD_HEIGHT],
+                                        egui::TextEdit::singleline(&mut rule.executable)
+                                            .hint_text(r"C:\Apps\app.exe"),
+                                    );
+                                });
+                                let browse_size =
+                                    Vec2::new(APP_RULE_BROWSE_WIDTH, APP_RULE_FIELD_HEIGHT);
+                                if let Some(action) =
+                                    app_rule_centered_cell(ui, APP_RULE_BROWSE_WIDTH, |ui| {
+                                        executable_picker_button(ui, idx, browse_size)
+                                    })
                                 {
                                     picker_actions.push((idx, action));
                                 }
-                                ui.allocate_ui_with_layout(
-                                    Vec2::new(APP_RULE_WORKSPACE_WIDTH, row_height),
-                                    egui::Layout::top_down(egui::Align::Min),
-                                    |ui| {
-                                        ui.add_space(APP_RULE_TEXT_FIELD_TOP_PADDING);
-                                        let id = ui.id().with(("app_rule_workspace", idx));
-                                        let mut workspace_text = ui.memory_mut(|mem| {
-                                            mem.data
-                                                .get_temp_mut_or_insert_with(id, || {
-                                                    rule.workspace
-                                                        .map(|ws| ws.to_string())
-                                                        .unwrap_or_default()
-                                                })
-                                                .clone()
+                                app_rule_centered_cell(ui, APP_RULE_WORKSPACE_WIDTH, |ui| {
+                                    let id = ui.id().with(("app_rule_workspace", idx));
+                                    let mut workspace_text = ui.memory_mut(|mem| {
+                                        mem.data
+                                            .get_temp_mut_or_insert_with(id, || {
+                                                rule.workspace
+                                                    .map(|ws| ws.to_string())
+                                                    .unwrap_or_default()
+                                            })
+                                            .clone()
+                                    });
+                                    let response = ui.add_sized(
+                                        [ui.available_width(), APP_RULE_FIELD_HEIGHT],
+                                        egui::TextEdit::singleline(&mut workspace_text)
+                                            .hint_text("none")
+                                            .horizontal_align(egui::Align::Center),
+                                    );
+                                    if response.changed() {
+                                        ui.memory_mut(|mem| {
+                                            *mem.data.get_temp_mut_or(id, workspace_text.clone()) =
+                                                workspace_text.clone();
                                         });
-                                        let response = ui.add_sized(
-                                            [
-                                                ui.available_width(),
-                                                (row_height - APP_RULE_TEXT_FIELD_TOP_PADDING)
-                                                    .max(ui.spacing().interact_size.y),
-                                            ],
-                                            egui::TextEdit::singleline(&mut workspace_text)
-                                                .hint_text("none")
-                                                .horizontal_align(egui::Align::Center),
-                                        );
-                                        if response.changed() {
-                                            ui.memory_mut(|mem| {
-                                                *mem.data.get_temp_mut_or(id, workspace_text.clone()) =
-                                                    workspace_text.clone();
-                                            });
-                                            let trimmed = workspace_text.trim();
-                                            rule.workspace = if trimmed.is_empty() {
-                                                None
-                                            } else {
-                                                trimmed.parse().ok()
-                                            };
+                                        let trimmed = workspace_text.trim();
+                                        rule.workspace = if trimmed.is_empty() {
+                                            None
+                                        } else {
+                                            trimmed.parse().ok()
+                                        };
+                                    }
+                                });
+                                app_rule_centered_cell(ui, APP_RULE_HOTKEY_WIDTH, |ui| {
+                                    ui.add_sized(
+                                        [ui.available_width(), APP_RULE_FIELD_HEIGHT],
+                                        egui::TextEdit::singleline(&mut rule.launch_hotkey)
+                                            .hint_text("none")
+                                            .horizontal_align(egui::Align::Center),
+                                    );
+                                });
+                                ui.allocate_ui_with_layout(
+                                    Vec2::new(APP_RULE_REMOVE_WIDTH, APP_RULE_ROW_HEIGHT),
+                                    egui::Layout::right_to_left(egui::Align::Center),
+                                    |ui| {
+                                        ui.add_space(APP_RULE_DELETE_TRAILING_PAD);
+                                        if ui
+                                            .add_sized(
+                                                [
+                                                    APP_RULE_DELETE_BUTTON_SIZE,
+                                                    APP_RULE_DELETE_BUTTON_SIZE,
+                                                ],
+                                                egui::Button::new(
+                                                    RichText::new("\u{1F5D1}")
+                                                        .size(16.0)
+                                                        .color(ERROR),
+                                                )
+                                                .fill(Color32::TRANSPARENT)
+                                                .stroke(Stroke::new(1.0, BORDER)),
+                                            )
+                                            .on_hover_text("Delete rule")
+                                            .clicked()
+                                        {
+                                            remove_idx = Some(idx);
                                         }
                                     },
                                 );
-                                ui.allocate_ui_with_layout(
-                                    Vec2::new(APP_RULE_HOTKEY_WIDTH, row_height),
-                                    egui::Layout::top_down(egui::Align::Min),
-                                    |ui| {
-                                        ui.add_space(APP_RULE_TEXT_FIELD_TOP_PADDING);
-                                        ui.add_sized(
-                                            [
-                                                ui.available_width(),
-                                                (row_height - APP_RULE_TEXT_FIELD_TOP_PADDING)
-                                                    .max(ui.spacing().interact_size.y),
-                                            ],
-                                            egui::TextEdit::singleline(&mut rule.launch_hotkey)
-                                                .hint_text("none")
-                                                .horizontal_align(egui::Align::Center),
-                                        );
-                                    },
-                                );
-                                if ui
-                                    .add_sized(
-                                        [APP_RULE_REMOVE_WIDTH, row_height],
-                                        egui::Button::new(
-                                            RichText::new("Remove").size(13.0).color(ERROR),
-                                        )
-                                        .fill(Color32::TRANSPARENT)
-                                        .stroke(Stroke::new(1.0, BORDER)),
-                                    )
-                                    .clicked()
-                                {
-                                    remove_idx = Some(idx);
-                                }
                                 ui.end_row();
                             }
                         });
@@ -720,6 +772,26 @@ fn column_header(text: &str) -> RichText {
     RichText::new(text).size(13.0).strong().color(TEXT_MUTED)
 }
 
+/// Allocates an app-rule grid cell of the standard row height and vertically
+/// centers `add_contents` (sized to `APP_RULE_FIELD_HEIGHT`) within it.
+fn app_rule_centered_cell<R>(
+    ui: &mut egui::Ui,
+    width: f32,
+    add_contents: impl FnOnce(&mut egui::Ui) -> R,
+) -> R {
+    let top_pad = ((APP_RULE_ROW_HEIGHT - APP_RULE_FIELD_HEIGHT) * 0.5).max(0.0);
+    let mut result = None;
+    ui.allocate_ui_with_layout(
+        Vec2::new(width, APP_RULE_ROW_HEIGHT),
+        egui::Layout::top_down(egui::Align::Min),
+        |ui| {
+            ui.add_space(top_pad);
+            result = Some(add_contents(ui));
+        },
+    );
+    result.expect("add_contents always runs")
+}
+
 fn app_rule_executable_width(row_width: f32, item_spacing: f32) -> f32 {
     let fixed = APP_RULE_BROWSE_WIDTH
         + APP_RULE_WORKSPACE_WIDTH
@@ -730,7 +802,9 @@ fn app_rule_executable_width(row_width: f32, item_spacing: f32) -> f32 {
 }
 
 fn hotkey_binding_width(row_width: f32, item_spacing: f32) -> f32 {
-    let fixed = HOTKEY_WORKSPACE_WIDTH + item_spacing * (HOTKEY_ROW_COLUMNS - 1.0);
+    let fixed = HOTKEY_WORKSPACE_WIDTH
+        + HOTKEY_DELETE_WIDTH
+        + item_spacing * (HOTKEY_ROW_COLUMNS - 1.0);
     ((row_width - fixed) / 2.0).max(120.0)
 }
 
