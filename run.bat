@@ -8,13 +8,17 @@ if /i "%~1"=="installer" (
     powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0installer\build-installer.ps1"
     exit /b %ERRORLEVEL%
 )
-
+set "SETTINGS_FLAG="
 set "BUILD_FLAG="
 set "EXE_PATH=target\debug\bgwm.exe"
 
 if /i "%~1"=="release" (
     set "BUILD_FLAG=--release"
     set "EXE_PATH=target\release\bgwm.exe"
+)
+
+if /i "%~1"=="settings" (
+    set "SETTINGS_FLAG=--settings"
 )
 
 echo [BGWM] Building (%EXE_PATH%)...
@@ -25,6 +29,6 @@ if errorlevel 1 (
 )
 
 echo [BGWM] Starting...
-"%EXE_PATH%"
+"%EXE_PATH% " "%SETTINGS_FLAG%"
 
 exit /b %ERRORLEVEL%

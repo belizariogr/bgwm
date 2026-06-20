@@ -18,9 +18,9 @@ const APP_RULE_BROWSE_WIDTH: f32 = 32.0;
 const APP_RULE_ROW_COLUMNS: f32 = 5.0;
 const APP_RULE_TEXT_FIELD_TOP_PADDING: f32 = 8.0;
 const EXECUTABLE_PICKER_POPUP_WIDTH: f32 = 250.0;
-const HOTKEY_WORKSPACE_WIDTH: f32 = 140.0;
+const HOTKEY_WORKSPACE_WIDTH: f32 = 200.0;
 const HOTKEY_ROW_COLUMNS: f32 = 3.0;
-const HOTKEY_TEXT_FIELD_TOP_PADDING: f32 = 8.0;
+const HOTKEY_ROW_VERTICAL_PADDING: i8 = 6;
 
 mod executable_picker;
 
@@ -211,26 +211,25 @@ impl SettingsApp {
             |ui| {
                 let row_width = ui.available_width();
                 let item_spacing = ui.spacing().item_spacing.x;
-                let row_height = ui.spacing().interact_size.y;
+                let row_height =
+                    ui.spacing().interact_size.y + (HOTKEY_ROW_VERTICAL_PADDING as f32) * 2.0;
                 let binding_width = hotkey_binding_width(row_width, item_spacing);
 
-                egui::Grid::new("workspace_hotkeys_grid")
+                egui::Grid::new("workspace_hotkeys_grid_v2")
                     .num_columns(3)
                     .spacing([item_spacing, 4.0])
+                    .min_row_height(row_height)
                     .striped(true)
                     .show(ui, |ui| {
-                        ui.add_sized(
-                            [HOTKEY_WORKSPACE_WIDTH, row_height],
-                            egui::Label::new(column_header("Workspace")),
-                        );
-                        ui.add_sized(
-                            [binding_width, row_height],
-                            egui::Label::new(column_header("Switch")),
-                        );
-                        ui.add_sized(
-                            [binding_width, row_height],
-                            egui::Label::new(column_header("Move")),
-                        );
+                        hotkey_grid_cell(ui, [HOTKEY_WORKSPACE_WIDTH, row_height], |ui| {
+                            ui.label(column_header("Workspace"));
+                        });
+                        hotkey_grid_cell(ui, [binding_width, row_height], |ui| {
+                            ui.label(column_header("Switch"));
+                        });
+                        hotkey_grid_cell(ui, [binding_width, row_height], |ui| {
+                            ui.label(column_header("Move"));
+                        });
                         ui.end_row();
 
                         for ws in
@@ -238,12 +237,11 @@ impl SettingsApp {
                         {
                             let key = ws.to_string();
 
-                            ui.add_sized(
-                                [HOTKEY_WORKSPACE_WIDTH, row_height],
-                                egui::Label::new(
+                            hotkey_grid_cell(ui, [HOTKEY_WORKSPACE_WIDTH, row_height], |ui| {
+                                ui.label(
                                     RichText::new(format!("Workspace {ws}")).color(Color32::WHITE),
-                                ),
-                            );
+                                );
+                            });
 
                             let switch_binding = self
                                 .config
@@ -734,6 +732,24 @@ fn hotkey_binding_width(row_width: f32, item_spacing: f32) -> f32 {
     ((row_width - fixed) / 2.0).max(120.0)
 }
 
+fn hotkey_grid_cell(
+    ui: &mut egui::Ui,
+    size: impl Into<Vec2>,
+    add_contents: impl FnOnce(&mut egui::Ui),
+) {
+    let size: Vec2 = size.into();
+    let (_id, rect) = ui.allocate_space(size);
+
+    let mut child_ui = ui.new_child(
+        egui::UiBuilder::new()
+            .max_rect(rect)
+            .layout(egui::Layout::left_to_right(egui::Align::Center)),
+    );
+    egui::Frame::NONE
+        .inner_margin(Margin::symmetric(0, HOTKEY_ROW_VERTICAL_PADDING))
+        .show(&mut child_ui, add_contents);
+}
+
 fn hotkey_binding_field(
     ui: &mut egui::Ui,
     width: f32,
@@ -742,24 +758,17 @@ fn hotkey_binding_field(
     hint: &str,
     on_change: impl FnOnce(String),
 ) {
-    ui.allocate_ui_with_layout(
-        Vec2::new(width, row_height),
-        egui::Layout::top_down(egui::Align::Min),
-        |ui| {
-            ui.add_space(HOTKEY_TEXT_FIELD_TOP_PADDING);
-            let mut text = binding;
-            let response = ui.add_sized(
-                [
-                    ui.available_width(),
-                    (row_height - HOTKEY_TEXT_FIELD_TOP_PADDING).max(ui.spacing().interact_size.y),
-                ],
-                egui::TextEdit::singleline(&mut text).hint_text(hint),
-            );
-            if response.changed() {
-                on_change(text);
-            }
-        },
-    );
+    let field_height = ui.spacing().interact_size.y;
+    hotkey_grid_cell(ui, Vec2::new(width, row_height), |ui| {
+        let mut text = binding;
+        let response = ui.add_sized(
+            [width, field_height],
+            egui::TextEdit::singleline(&mut text).hint_text(hint),
+        );
+        if response.changed() {
+            on_change(text);
+        }
+    });
 }
 
 fn executable_picker_button(
