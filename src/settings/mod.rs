@@ -161,7 +161,7 @@ impl SettingsApp {
                                 ui.add_space(2.0);
                                 ui.label(
                                     RichText::new(
-                                        "Manage startup, workspace hotkeys, and app routing · numbered from {WORKSPACE_INDEX_BASE}",
+                                        "Manage startup, workspace hotkeys, and app routing.",
                                     )
                                     .size(14.0)
                                     .color(TEXT_MUTED),
