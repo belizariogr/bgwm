@@ -326,7 +326,7 @@ impl BgwmApp {
         let mut routes = 0usize;
         for window in enumerate_main_windows() {
             for rule in &app_rules {
-                if !matches_executable(&rule.executable, &window.executable) {
+                if !matches_executable(&rule.executable, &window.executable_path) {
                     continue;
                 }
 

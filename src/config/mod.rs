@@ -1,7 +1,8 @@
 mod schema;
 
 pub use schema::{
-    matches_executable, AppRule, Config, ConfigError, SettingsWindow, StartupSettings,
+    is_executable_full_path, matches_executable, AppRule, Config, ConfigError, SettingsWindow,
+    StartupSettings,
 };
 
 use std::fs;

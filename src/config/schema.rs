@@ -265,11 +265,33 @@ pub fn executable_basename(path_or_name: &str) -> String {
         .to_ascii_lowercase()
 }
 
-/// Matches a configured rule against a running process using only the `.exe` file name.
-pub fn matches_executable(rule_exe: &str, process_exe: &str) -> bool {
-    let rule = executable_basename(rule_exe);
-    let process = executable_basename(process_exe);
-    !rule.is_empty() && rule == process
+pub fn is_executable_full_path(path_or_name: &str) -> bool {
+    let trimmed = path_or_name.trim();
+    trimmed.contains('\\') || trimmed.contains('/')
+}
+
+fn normalize_executable_path(path: &str) -> String {
+    path.trim().replace('/', "\\").to_ascii_lowercase()
+}
+
+/// Matches a configured rule against a running process executable path.
+///
+/// When the rule stores a full path, only that exact executable matches.
+/// When the rule stores only a file name, any process with the same file name matches.
+pub fn matches_executable(rule_exe: &str, process_path: &str) -> bool {
+    let rule = rule_exe.trim();
+    if rule.is_empty() {
+        return false;
+    }
+
+    if is_executable_full_path(rule) {
+        is_executable_full_path(process_path)
+            && normalize_executable_path(rule) == normalize_executable_path(process_path)
+    } else {
+        let rule_base = executable_basename(rule);
+        let process_base = executable_basename(process_path);
+        !rule_base.is_empty() && rule_base == process_base
+    }
 }
 
 #[cfg(test)]
@@ -302,14 +324,31 @@ mod tests {
     }
 
     #[test]
-    fn matches_executable_full_path_against_process_name() {
+    fn matches_executable_full_path_exact_only() {
+        let chrome = r"C:\Program Files\Google\Chrome\Application\chrome.exe";
+        let chromium = r"C:\Tools\chromium\chrome.exe";
+        assert!(matches_executable(chrome, chrome));
+        assert!(!matches_executable(chrome, chromium));
+        assert!(!matches_executable(chrome, "chrome.exe"));
+    }
+
+    #[test]
+    fn matches_executable_full_path_case_insensitive() {
         assert!(matches_executable(
-            r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+            r"C:\Apps\MyApp.exe",
+            r"c:\apps\myapp.exe"
+        ));
+    }
+
+    #[test]
+    fn matches_executable_filename_matches_any_path() {
+        assert!(matches_executable(
+            "chrome.exe",
             r"C:\Program Files\Google\Chrome\Application\chrome.exe"
         ));
         assert!(matches_executable(
-            r"C:\Program Files\Google\Chrome\Application\chrome.exe",
-            "chrome.exe"
+            "chrome.exe",
+            r"C:\Tools\chromium\chrome.exe"
         ));
     }
 

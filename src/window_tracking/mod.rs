@@ -42,7 +42,10 @@ pub fn is_window_valid(hwnd: isize) -> bool {
 pub struct MainWindowInfo {
     pub hwnd: isize,
     pub pid: u32,
+    /// Basename of the executable (for logging).
     pub executable: String,
+    /// Full path to the executable (for rule matching).
+    pub executable_path: String,
 }
 
 /// Process IDs that already had main windows when BGWM started.
@@ -90,7 +93,9 @@ pub fn running_pids_for_executable(executable: &str) -> HashSet<u32> {
                     .position(|&c| c == 0)
                     .unwrap_or(entry.szExeFile.len());
                 let name = String::from_utf16_lossy(&entry.szExeFile[..end]);
-                if matches_executable(executable, &name) {
+                let process_path = full_process_image_path_for_pid(entry.th32ProcessID)
+                    .unwrap_or_else(|| name.clone());
+                if matches_executable(executable, &process_path) {
                     pids.insert(entry.th32ProcessID);
                 }
                 if Process32NextW(snapshot, &mut entry).is_err() {
@@ -249,14 +254,16 @@ unsafe extern "system" fn collect_main_windows(hwnd: HWND, lparam: LPARAM) -> BO
     let Some(pid) = process_id_for_hwnd(hwnd_isize) else {
         return BOOL(1);
     };
-    let Some(executable) = executable_for_hwnd(hwnd_isize) else {
+    let Some(executable_path) = full_process_image_path_for_hwnd(hwnd_isize) else {
         return BOOL(1);
     };
+    let executable = normalize_exe_path(&executable_path);
 
     windows.push(MainWindowInfo {
         hwnd: hwnd_isize,
         pid,
         executable,
+        executable_path,
     });
     BOOL(1)
 }
@@ -298,10 +305,10 @@ unsafe extern "system" fn find_executable_main_window(hwnd: HWND, lparam: LPARAM
         return BOOL(1);
     }
 
-    let Some(name) = executable_for_hwnd(hwnd.0 as isize) else {
+    let Some(path) = full_process_image_path_for_hwnd(hwnd.0 as isize) else {
         return BOOL(1);
     };
-    if matches_executable(&ctx.executable, &name) {
+    if matches_executable(&ctx.executable, &path) {
         ctx.hwnd = Some(hwnd.0 as isize);
         return BOOL(0);
     }
