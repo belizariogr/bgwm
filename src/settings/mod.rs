@@ -1,4 +1,4 @@
-use std::time::SystemTime;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use eframe::egui;
 use eframe::egui::{Color32, CornerRadius, Margin, RichText, Stroke, Vec2};
@@ -28,6 +28,10 @@ const APP_RULE_BROWSE_BUTTON_PADDING: Vec2 = Vec2::new(6.0, 3.0);
 /// Gap between the delete button and the right edge of the row.
 const APP_RULE_DELETE_TRAILING_PAD: f32 = 6.0;
 const EXECUTABLE_PICKER_POPUP_WIDTH: f32 = 250.0;
+const WINDOW_PICKER_DEFAULT_SIZE: Vec2 = Vec2::new(520.0, 420.0);
+const WINDOW_PICKER_MAX_HEIGHT_RATIO: f32 = 0.75;
+const WINDOW_PICKER_MIN_LIST_HEIGHT: f32 = 160.0;
+const WINDOW_PICKER_NON_LIST_HEIGHT: f32 = 120.0;
 const WINDOW_PICKER_ITEM_HEIGHT: f32 = 52.0;
 const HOTKEY_WORKSPACE_WIDTH: f32 = 200.0;
 const HOTKEY_ROW_COLUMNS: f32 = 4.0;
@@ -38,6 +42,7 @@ const HOTKEY_DELETE_WIDTH: f32 = 64.0;
 const HOTKEY_DELETE_BUTTON_SIZE: f32 = 30.0;
 /// Gap between the delete button and the right edge of the row.
 const HOTKEY_DELETE_TRAILING_PAD: f32 = 6.0;
+const HEADER_ACTION_TRAILING_MARGIN: f32 = 8.0;
 /// Vertical nudge for Switch/Move text fields within their row (pixels; negative = up, positive = down).
 const HOTKEY_BINDING_FIELD_Y_OFFSET: f32 = -1.0;
 
@@ -75,6 +80,7 @@ pub struct SettingsApp {
     error: Option<String>,
     last_window_size: egui::Vec2,
     window_picker_rule: Option<usize>,
+    window_picker_generation: u64,
     window_picker_use_full_path: bool,
     pickable_windows: Vec<executable_picker::PickableWindow>,
     show_about: bool,
@@ -93,6 +99,7 @@ impl SettingsApp {
             error: None,
             last_window_size,
             window_picker_rule: None,
+            window_picker_generation: 0,
             window_picker_use_full_path: true,
             pickable_windows: Vec::new(),
             show_about: false,
@@ -565,6 +572,10 @@ impl SettingsApp {
                                 self.window_picker_use_full_path =
                                     exe.is_empty() || is_executable_full_path(exe);
                                 self.window_picker_rule = Some(idx);
+                                self.window_picker_generation = unique_window_picker_generation()
+                                    .unwrap_or_else(|| {
+                                        self.window_picker_generation.wrapping_add(1)
+                                    });
                             }
                             ExecutablePickerAction::SelectedExecutable(exe) => {
                                 self.config.app_rules[idx].executable = exe;
@@ -598,11 +609,16 @@ impl SettingsApp {
         let mut cancel = false;
         let use_full_path = &mut self.window_picker_use_full_path;
         let windows = self.pickable_windows.clone();
+        let picker_id = egui::Id::new(("window_picker", self.window_picker_generation));
+        let picker_max_height = self.last_window_size.y * WINDOW_PICKER_MAX_HEIGHT_RATIO;
+        let picker_default_size = Vec2::new(WINDOW_PICKER_DEFAULT_SIZE.x, picker_max_height);
         egui::Window::new("Select window")
+            .id(picker_id)
             .open(&mut open)
             .collapsible(false)
             .resizable(true)
-            .default_size([520.0, 420.0])
+            .default_size(picker_default_size)
+            .max_height(picker_max_height)
             .show(ctx, |ui| {
                 ui.label(
                     RichText::new("Choose a window to fill the executable field.").color(TEXT_MUTED),
@@ -618,14 +634,20 @@ impl SettingsApp {
                 if windows.is_empty() {
                     ui.label(RichText::new("No suitable windows found.").color(TEXT_MUTED));
                 } else {
+                    let max_list_height =
+                        (picker_max_height - WINDOW_PICKER_NON_LIST_HEIGHT).max(80.0);
+                    let min_list_height = WINDOW_PICKER_MIN_LIST_HEIGHT.min(max_list_height);
+                    let list_height = (ui.available_height() - WINDOW_PICKER_NON_LIST_HEIGHT)
+                        .clamp(min_list_height, max_list_height);
                     egui::Frame::new()
                         .fill(SURFACE_INSET)
                         .stroke(Stroke::new(1.0, BORDER))
                         .corner_radius(CornerRadius::same(8))
                         .inner_margin(Margin::same(8))
                         .show(ui, |ui| {
-                            ui.set_min_height(260.0);
+                            ui.set_min_height(list_height);
                             egui::ScrollArea::vertical()
+                                .max_height(list_height)
                                 .auto_shrink([false; 2])
                                 .show(ui, |ui| {
                                     ui.set_min_width(ui.available_width());
@@ -650,17 +672,20 @@ impl SettingsApp {
                         });
                 }
 
-                ui.add_space(8.0);
+                ui.add_space(4.0);
                 if ui
                     .add(
                         egui::Button::new(RichText::new("Cancel").color(Color32::WHITE))
                             .fill(SURFACE_ELEVATED)
-                            .stroke(Stroke::new(1.0, BORDER)),
+                            .stroke(Stroke::new(1.0, BORDER))
+                        
                     )
                     .clicked()
+                    
                 {
                     cancel = true;
                 }
+                ui.add_space(1.0);
             });
 
         if let Some(exe) = selected_executable {
@@ -805,6 +830,13 @@ impl SettingsApp {
     }
 }
 
+fn unique_window_picker_generation() -> Option<u64> {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .ok()
+        .map(|duration| duration.as_nanos() as u64)
+}
+
 fn apply_theme(ctx: &egui::Context) {
     ctx.set_theme(egui::Theme::Dark);
 
@@ -941,6 +973,7 @@ fn section_card_with_action<R>(
                         .color(Color32::WHITE),
                 );
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    ui.add_space(HEADER_ACTION_TRAILING_MARGIN);
                     header_action(ui);
                 });
             });
