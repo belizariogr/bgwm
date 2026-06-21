@@ -3,7 +3,7 @@ use std::time::SystemTime;
 use eframe::egui;
 use eframe::egui::{Color32, CornerRadius, Margin, RichText, Stroke, Vec2};
 
-use crate::config::{AppRule, Config, ConfigError, SettingsWindow};
+use crate::config::{is_executable_full_path, AppRule, Config, ConfigError, SettingsWindow};
 use crate::hotkeys::hotkey_help_sections;
 use crate::process_job::ChildProcessJob;
 use crate::virtual_desktop::{self, WORKSPACE_INDEX_BASE};
@@ -28,6 +28,7 @@ const APP_RULE_BROWSE_BUTTON_PADDING: Vec2 = Vec2::new(6.0, 3.0);
 /// Gap between the delete button and the right edge of the row.
 const APP_RULE_DELETE_TRAILING_PAD: f32 = 6.0;
 const EXECUTABLE_PICKER_POPUP_WIDTH: f32 = 250.0;
+const WINDOW_PICKER_ITEM_HEIGHT: f32 = 52.0;
 const HOTKEY_WORKSPACE_WIDTH: f32 = 200.0;
 const HOTKEY_ROW_COLUMNS: f32 = 4.0;
 const HOTKEY_ROW_VERTICAL_PADDING: i8 = 10;
@@ -47,6 +48,7 @@ const ACCENT_MUTED: Color32 = Color32::from_rgb(76, 219, 196);
 const PANEL_FILL: Color32 = Color32::from_rgb(24, 27, 33);
 const SURFACE: Color32 = Color32::from_rgb(32, 36, 44);
 const SURFACE_ELEVATED: Color32 = Color32::from_rgb(40, 45, 54);
+const SURFACE_INSET: Color32 = Color32::from_rgb(16, 18, 23);
 const BORDER: Color32 = Color32::from_rgb(56, 62, 74);
 const TEXT_MUTED: Color32 = Color32::from_rgb(156, 163, 175);
 const SUCCESS: Color32 = Color32::from_rgb(74, 222, 128);
@@ -73,6 +75,7 @@ pub struct SettingsApp {
     error: Option<String>,
     last_window_size: egui::Vec2,
     window_picker_rule: Option<usize>,
+    window_picker_use_full_path: bool,
     pickable_windows: Vec<executable_picker::PickableWindow>,
     show_about: bool,
 }
@@ -90,6 +93,7 @@ impl SettingsApp {
             error: None,
             last_window_size,
             window_picker_rule: None,
+            window_picker_use_full_path: true,
             pickable_windows: Vec::new(),
             show_about: false,
         }
@@ -557,6 +561,9 @@ impl SettingsApp {
                         match action {
                             ExecutablePickerAction::OpenWindowList => {
                                 self.pickable_windows = executable_picker::list_pickable_windows();
+                                let exe = self.config.app_rules[idx].executable.trim();
+                                self.window_picker_use_full_path =
+                                    exe.is_empty() || is_executable_full_path(exe);
                                 self.window_picker_rule = Some(idx);
                             }
                             ExecutablePickerAction::SelectedExecutable(exe) => {
@@ -589,6 +596,7 @@ impl SettingsApp {
         let mut open = true;
         let mut selected_executable = None;
         let mut cancel = false;
+        let use_full_path = &mut self.window_picker_use_full_path;
         let windows = self.pickable_windows.clone();
         egui::Window::new("Select window")
             .open(&mut open)
@@ -597,22 +605,48 @@ impl SettingsApp {
             .default_size([520.0, 420.0])
             .show(ctx, |ui| {
                 ui.label(
-                    RichText::new("Choose a window to use its executable path.").color(TEXT_MUTED),
+                    RichText::new("Choose a window to fill the executable field.").color(TEXT_MUTED),
                 );
+                ui.add_space(8.0);
+                ui.checkbox(use_full_path, "Use full executable path")
+                    .on_hover_text(
+                        "When enabled, the full path is used (e.g. C:\\Apps\\chrome.exe). \
+                         When disabled, only the file name is used (e.g. chrome.exe).",
+                    );
                 ui.add_space(8.0);
 
                 if windows.is_empty() {
                     ui.label(RichText::new("No suitable windows found.").color(TEXT_MUTED));
                 } else {
-                    egui::ScrollArea::vertical()
-                        .auto_shrink([false; 2])
+                    egui::Frame::new()
+                        .fill(SURFACE_INSET)
+                        .stroke(Stroke::new(1.0, BORDER))
+                        .corner_radius(CornerRadius::same(8))
+                        .inner_margin(Margin::same(8))
                         .show(ui, |ui| {
-                            for window in windows {
-                                let label = format!("{} — {}", window.title, window.executable);
-                                if ui.selectable_label(false, label).clicked() {
-                                    selected_executable = Some(window.full_path);
-                                }
-                            }
+                            ui.set_min_height(260.0);
+                            egui::ScrollArea::vertical()
+                                .auto_shrink([false; 2])
+                                .show(ui, |ui| {
+                                    ui.set_min_width(ui.available_width());
+                                    for window in windows {
+                                        let display_exe = if *use_full_path {
+                                            &window.full_path
+                                        } else {
+                                            &window.executable
+                                        };
+                                        if window_picker_list_item(
+                                            ui,
+                                            &window.title,
+                                            display_exe,
+                                        )
+                                        .clicked()
+                                        {
+                                            selected_executable = Some(display_exe.clone());
+                                        }
+                                        ui.add_space(4.0);
+                                    }
+                                });
                         });
                 }
 
@@ -823,6 +857,58 @@ fn build_app_visuals() -> egui::Visuals {
     visuals.warn_fg_color = Color32::from_rgb(251, 191, 36);
     visuals.error_fg_color = ERROR;
     visuals
+}
+
+fn window_picker_truncated_galley(
+    ui: &egui::Ui,
+    text: &str,
+    font_id: egui::FontId,
+    color: Color32,
+    max_width: f32,
+) -> std::sync::Arc<egui::Galley> {
+    let mut job = egui::text::LayoutJob::simple(text.to_owned(), font_id, color, max_width);
+    job.wrap = egui::text::TextWrapping::truncate_at_width(max_width);
+    ui.painter().layout_job(job)
+}
+
+fn window_picker_list_item(ui: &mut egui::Ui, title: &str, executable: &str) -> egui::Response {
+    let width = ui.available_width();
+    let response = ui.allocate_response(
+        egui::vec2(width, WINDOW_PICKER_ITEM_HEIGHT),
+        egui::Sense::click(),
+    );
+    let rect = response.rect;
+    let visuals = ui.visuals();
+    let bg = if response.is_pointer_button_down_on() {
+        visuals.widgets.active.bg_fill
+    } else if response.hovered() {
+        visuals.widgets.hovered.bg_fill
+    } else {
+        Color32::TRANSPARENT
+    };
+
+    if bg != Color32::TRANSPARENT {
+        ui.painter()
+            .rect_filled(rect, CornerRadius::same(6), bg);
+    }
+
+    let text_x = rect.left() + 10.0;
+    let title_y = rect.top() + 8.0;
+    let exe_y = title_y + 20.0;
+    let max_width = (rect.width() - 20.0).max(0.0);
+    let title_font = egui::TextStyle::Body.resolve(ui.style());
+    let exe_font = egui::FontId::new(12.0, egui::FontFamily::Proportional);
+    let painter = ui.painter();
+
+    let title_galley =
+        window_picker_truncated_galley(ui, title, title_font, Color32::WHITE, max_width);
+    let exe_galley =
+        window_picker_truncated_galley(ui, executable, exe_font, TEXT_MUTED, max_width);
+
+    painter.galley(egui::pos2(text_x, title_y), title_galley, Color32::WHITE);
+    painter.galley(egui::pos2(text_x, exe_y), exe_galley, TEXT_MUTED);
+
+    response
 }
 
 fn section_card(
