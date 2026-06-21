@@ -74,6 +74,7 @@ pub struct SettingsApp {
     last_window_size: egui::Vec2,
     window_picker_rule: Option<usize>,
     pickable_windows: Vec<executable_picker::PickableWindow>,
+    show_about: bool,
 }
 
 impl SettingsApp {
@@ -90,6 +91,7 @@ impl SettingsApp {
             last_window_size,
             window_picker_rule: None,
             pickable_windows: Vec::new(),
+            show_about: false,
         }
     }
 }
@@ -127,6 +129,7 @@ impl eframe::App for SettingsApp {
             });
 
         self.draw_window_picker(ctx);
+        self.draw_about_dialog(ctx);
     }
 
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
@@ -634,6 +637,84 @@ impl SettingsApp {
         }
     }
 
+    fn draw_about_dialog(&mut self, ctx: &egui::Context) {
+        if !self.show_about {
+            return;
+        }
+
+        let mut open = true;
+        let window_frame = egui::Frame::window(&ctx.style())
+            .inner_margin(Margin {
+                left: 16,
+                right: 16,
+                top: 12,
+                bottom: 8,
+            })
+            .fill(PANEL_FILL)
+            .stroke(Stroke::new(1.0, BORDER));
+        egui::Window::new("About BGWM")
+            .open(&mut open)
+            .collapsible(false)
+            .resizable(false)
+            .auto_sized()
+            .frame(window_frame)
+            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+            .show(ctx, |ui| {
+                ui.set_max_width(320.0);
+                ui.vertical_centered(|ui| {
+                    ui.label(
+                        RichText::new("Better Windows Workspaces Manager")
+                            .size(16.0)
+                            .strong()
+                            .color(Color32::WHITE),
+                    );
+                    ui.add_space(2.0);
+                    ui.label(
+                        RichText::new(format!("Version {}", env!("CARGO_PKG_VERSION")))
+                            .size(13.0)
+                            .color(TEXT_MUTED),
+                    );
+                });
+
+                ui.add_space(10.0);
+                ui.separator();
+                ui.add_space(8.0);
+
+                ui.label(
+                    RichText::new("Developer")
+                        .size(14.0)
+                        .strong()
+                        .color(ACCENT_MUTED),
+                );
+                ui.add_space(4.0);
+                ui.label(RichText::new("Belizário G. Ribeiro Filho").color(Color32::WHITE));
+                ui.add_space(2.0);
+                ui.hyperlink_to(
+                    "github.com/belizariogr/bgwm",
+                    "https://github.com/belizariogr/bgwm",
+                );
+
+                ui.add_space(6.0);
+                ui.allocate_ui_with_layout(
+                    Vec2::new(ui.available_width(), 32.0),
+                    egui::Layout::right_to_left(egui::Align::Center),
+                    |ui| {
+                        let prev_padding = ui.spacing().button_padding;
+                        ui.spacing_mut().button_padding = Vec2::new(10.0, 10.0);
+                        if secondary_button(ui, "Close").clicked() {
+                            self.show_about = false;
+                        }
+                        ui.spacing_mut().button_padding = prev_padding;
+                    },
+                );
+                ui.add_space(1.0);
+            });
+
+        if !open {
+            self.show_about = false;
+        }
+    }
+
     fn draw_footer(&mut self, ctx: &egui::Context) {
         egui::TopBottomPanel::bottom("settings_actions")
             .frame(
@@ -644,6 +725,10 @@ impl SettingsApp {
             )
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
+                    if secondary_button(ui, "About").clicked() {
+                        self.show_about = true;
+                    }
+
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         if primary_button(ui, "Save & Apply").clicked() {
                             match self.apply() {
