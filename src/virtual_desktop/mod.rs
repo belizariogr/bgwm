@@ -92,6 +92,16 @@ pub fn is_window_not_found(err: &VirtualDesktopError) -> bool {
     )
 }
 
+pub fn foreground_hwnd() -> Option<isize> {
+    focused_hwnd()
+}
+
+pub fn window_workspace_index(hwnd: isize) -> Result<u32, VirtualDesktopError> {
+    let hwnd = HWND(hwnd as *mut _);
+    let desktop = winvd::get_desktop_by_window(hwnd)?;
+    Ok(desktop.get_index()? + WORKSPACE_INDEX_BASE)
+}
+
 pub fn move_focused_window_to_workspace(index: u32) -> Result<isize, VirtualDesktopError> {
     let hwnd = focused_hwnd().ok_or(VirtualDesktopError::NoFocusedWindow)?;
     move_window_to_workspace(hwnd, index)?;

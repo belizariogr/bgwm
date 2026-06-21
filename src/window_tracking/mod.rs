@@ -38,7 +38,14 @@ pub fn is_window_valid(hwnd: isize) -> bool {
     unsafe { IsWindow(hwnd).as_bool() }
 }
 
-/// Process IDs that already had main windows when BGWM started (excluded from app routing).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MainWindowInfo {
+    pub hwnd: isize,
+    pub pid: u32,
+    pub executable: String,
+}
+
+/// Process IDs that already had main windows when BGWM started.
 /// Includes windows on other virtual desktops (not visible from the current desktop).
 pub fn existing_main_window_pids() -> HashSet<u32> {
     let mut pids = HashSet::new();
@@ -47,6 +54,16 @@ pub fn existing_main_window_pids() -> HashSet<u32> {
         let _ = EnumWindows(Some(collect_existing_main_pid), lparam);
     }
     pids
+}
+
+/// All main windows currently open, including on other virtual desktops.
+pub fn enumerate_main_windows() -> Vec<MainWindowInfo> {
+    let mut windows = Vec::new();
+    unsafe {
+        let lparam = LPARAM(&mut windows as *mut _ as isize);
+        let _ = EnumWindows(Some(collect_main_windows), lparam);
+    }
+    windows
 }
 
 /// Running process IDs whose executable matches a configured app rule.
@@ -222,6 +239,28 @@ fn normalize_exe_path(path: &str) -> String {
         .to_string()
 }
 
+unsafe extern "system" fn collect_main_windows(hwnd: HWND, lparam: LPARAM) -> BOOL {
+    let windows = &mut *(lparam.0 as *mut Vec<MainWindowInfo>);
+    if !is_main_window_inner(hwnd, false) || is_own_process_window(hwnd) {
+        return BOOL(1);
+    }
+
+    let hwnd_isize = hwnd.0 as isize;
+    let Some(pid) = process_id_for_hwnd(hwnd_isize) else {
+        return BOOL(1);
+    };
+    let Some(executable) = executable_for_hwnd(hwnd_isize) else {
+        return BOOL(1);
+    };
+
+    windows.push(MainWindowInfo {
+        hwnd: hwnd_isize,
+        pid,
+        executable,
+    });
+    BOOL(1)
+}
+
 unsafe extern "system" fn collect_existing_main_pid(hwnd: HWND, lparam: LPARAM) -> BOOL {
     let pids = &mut *(lparam.0 as *mut HashSet<u32>);
     if is_main_window_inner(hwnd, false) && !is_own_process_window(hwnd) {
@@ -288,6 +327,11 @@ mod tests {
             normalize_exe_path(r"C:\Program Files\Google\Chrome\Application\chrome.exe"),
             "chrome.exe"
         );
+    }
+
+    #[test]
+    fn enumerate_main_windows_does_not_panic() {
+        let _ = enumerate_main_windows();
     }
 
     #[test]

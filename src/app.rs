@@ -20,9 +20,8 @@ use crate::tray::{
 };
 use crate::virtual_desktop::{self, WORKSPACE_INDEX_BASE};
 use crate::window_tracking::{
-    existing_main_window_pids, find_main_window_for_executable, is_window_valid,
-    process_has_main_window, process_id_for_hwnd, running_pids_for_executable, AppWindowEvent,
-    WindowWatcher,
+    enumerate_main_windows, existing_main_window_pids, find_main_window_for_executable,
+    is_window_valid, process_has_main_window, process_id_for_hwnd, AppWindowEvent, WindowWatcher,
 };
 
 const ROUTE_RETRY_DELAYS: [Duration; 3] = [
@@ -39,6 +38,8 @@ struct PendingAppRoute {
     executable: String,
     attempt: usize,
     due: Instant,
+    /// When true, switch to the target workspace after a successful move.
+    switch_on_success: bool,
 }
 
 #[derive(Debug)]
@@ -67,8 +68,8 @@ pub struct BgwmApp {
     routed_processes: HashSet<u32>,
     /// Main window handle routed for each process (for cleanup on destroy).
     routed_main_hwnd: HashMap<u32, isize>,
-    /// Processes that already had main windows when BGWM started; excluded from app routing.
-    startup_pids: HashSet<u32>,
+    /// Processes that already had main windows when BGWM started.
+    pre_existing_pids: HashSet<u32>,
     pending_app_routes: Vec<PendingAppRoute>,
     current_workspace: u32,
     workspace_count: u32,
@@ -90,7 +91,7 @@ impl BgwmApp {
             window_watcher: None,
             routed_processes: HashSet::new(),
             routed_main_hwnd: HashMap::new(),
-            startup_pids: HashSet::new(),
+            pre_existing_pids: HashSet::new(),
             pending_app_routes: Vec::new(),
             current_workspace: WORKSPACE_INDEX_BASE,
             workspace_count: WORKSPACE_INDEX_BASE,
@@ -117,22 +118,7 @@ impl BgwmApp {
 
         self.start_hotkeys();
         self.start_desktop_listener();
-        self.startup_pids = existing_main_window_pids();
-        let app_rules = self
-            .config
-            .lock()
-            .expect("config poisoned")
-            .app_rules
-            .clone();
-        for rule in &app_rules {
-            for pid in running_pids_for_executable(&rule.executable) {
-                self.startup_pids.insert(pid);
-            }
-        }
-        info!(
-            "ignoring {} pre-existing process(es) for app routing",
-            self.startup_pids.len()
-        );
+        self.organize_existing_windows_at_startup();
         self.window_watcher = Some(WindowWatcher::start());
         self.last_config_mtime = settings::config_mtime();
         virtual_desktop::init_focus_exclusions();
@@ -210,13 +196,14 @@ impl BgwmApp {
                 }
             }
             HotkeyAction::MoveWindowToWorkspace(ws) => {
-                if self.current_workspace == ws {
-                    return;
-                }
                 match virtual_desktop::move_focused_window_to_workspace(ws) {
                     Ok(hwnd) => {
-                        if let Err(e) = virtual_desktop::switch_to_workspace_focusing(ws, hwnd) {
-                            warn!("switch after move failed: {e}");
+                        if self.current_workspace != ws {
+                            if let Err(e) =
+                                virtual_desktop::switch_to_workspace_focusing(ws, hwnd)
+                            {
+                                warn!("switch after move failed: {e}");
+                            }
                         }
                     }
                     Err(e) => warn!("move window failed: {e}"),
@@ -326,6 +313,70 @@ impl BgwmApp {
         self.reload_hotkeys();
     }
 
+    fn organize_existing_windows_at_startup(&mut self) {
+        self.pre_existing_pids = existing_main_window_pids();
+        let foreground = virtual_desktop::foreground_hwnd();
+        let app_rules = self
+            .config
+            .lock()
+            .expect("config poisoned")
+            .app_rules
+            .clone();
+
+        let mut routes = 0usize;
+        for window in enumerate_main_windows() {
+            for rule in &app_rules {
+                if !matches_executable(&rule.executable, &window.executable) {
+                    continue;
+                }
+
+                let Some(workspace) = rule.workspace else {
+                    continue;
+                };
+
+                if virtual_desktop::window_workspace_index(window.hwnd)
+                    .ok()
+                    .is_some_and(|index| index == workspace)
+                {
+                    self.routed_processes.insert(window.pid);
+                    self.routed_main_hwnd.insert(window.pid, window.hwnd);
+                    break;
+                }
+
+                if self
+                    .pending_app_routes
+                    .iter()
+                    .any(|route| route.hwnd == window.hwnd)
+                {
+                    break;
+                }
+
+                let switch_on_success = foreground.is_some_and(|hwnd| hwnd == window.hwnd);
+                info!(
+                    "startup: routing {} to workspace {workspace} (hwnd {}, pid {})",
+                    window.executable, window.hwnd, window.pid
+                );
+
+                self.pending_app_routes.push(PendingAppRoute {
+                    hwnd: window.hwnd,
+                    pid: window.pid,
+                    workspace,
+                    executable: window.executable.clone(),
+                    attempt: 0,
+                    due: Instant::now(),
+                    switch_on_success,
+                });
+                routes += 1;
+                break;
+            }
+        }
+
+        info!(
+            "queued {routes} existing window(s) for startup routing ({} pre-existing process(es))",
+            self.pre_existing_pids.len()
+        );
+    }
+
     fn handle_desktop_event(&mut self, event: DesktopEvent) {
         if matches!(event, DesktopEvent::DesktopChanged { .. }) {
             virtual_desktop::on_desktop_changed();
@@ -360,8 +411,8 @@ impl BgwmApp {
         match event {
             AppWindowEvent::MainWindowDestroyed { pid, hwnd } => {
                 self.pending_app_routes.retain(|route| route.pid != pid);
-                if self.startup_pids.contains(&pid) && !process_has_main_window(pid) {
-                    self.startup_pids.remove(&pid);
+                if self.pre_existing_pids.contains(&pid) && !process_has_main_window(pid) {
+                    self.pre_existing_pids.remove(&pid);
                 }
                 if self.routed_main_hwnd.get(&pid).is_some_and(|&h| h == hwnd) {
                     self.routed_processes.remove(&pid);
@@ -372,9 +423,6 @@ impl BgwmApp {
                 let Some(pid) = process_id_for_hwnd(hwnd) else {
                     return;
                 };
-                if self.startup_pids.contains(&pid) {
-                    return;
-                }
                 if self.routed_processes.contains(&pid) {
                     return;
                 }
@@ -399,6 +447,11 @@ impl BgwmApp {
                         break;
                     }
 
+                    let is_new_process = !self.pre_existing_pids.contains(&pid);
+                    let is_foreground =
+                        virtual_desktop::foreground_hwnd().is_some_and(|fg| fg == hwnd);
+                    let switch_on_success = is_new_process || is_foreground;
+
                     info!(
                         "routing {executable} to workspace {workspace} (hwnd {hwnd}, pid {pid})",
                     );
@@ -410,6 +463,7 @@ impl BgwmApp {
                         executable,
                         attempt: 0,
                         due: Instant::now(),
+                        switch_on_success,
                     });
                     break;
                 }
@@ -433,7 +487,7 @@ impl BgwmApp {
 
             match virtual_desktop::move_window_to_workspace(route.hwnd, route.workspace) {
                 Ok(()) => {
-                    if self.current_workspace != route.workspace {
+                    if route.switch_on_success && self.current_workspace != route.workspace {
                         if let Err(e) = virtual_desktop::switch_to_workspace_focusing(
                             route.workspace,
                             route.hwnd,
