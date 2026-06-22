@@ -619,6 +619,7 @@ impl SettingsApp {
             .resizable(true)
             .default_size(picker_default_size)
             .max_height(picker_max_height)
+            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
             .show(ctx, |ui| {
                 ui.label(
                     RichText::new("Choose a window to fill the executable field.").color(TEXT_MUTED),
