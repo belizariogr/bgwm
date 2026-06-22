@@ -1,4 +1,5 @@
 use std::mem::size_of;
+use std::path::Path;
 
 use windows::core::PWSTR;
 use windows::Win32::Foundation::{BOOL, HWND, LPARAM};
@@ -7,7 +8,8 @@ use windows::Win32::UI::Controls::Dialogs::{
     GetOpenFileNameW, OFN_EXPLORER, OFN_FILEMUSTEXIST, OFN_PATHMUSTEXIST, OPENFILENAMEW,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    EnumWindows, GetWindowTextW, GetWindowThreadProcessId,
+    EnumWindows, GetClassNameW, GetWindowTextW, GetWindowThreadProcessId, IsWindow,
+    IsWindowVisible,
 };
 
 use crate::window_tracking::{executable_for_hwnd, full_process_image_path_for_hwnd, is_main_window};
@@ -64,7 +66,7 @@ pub fn pick_executable_file() -> Option<String> {
 
 unsafe extern "system" fn collect_pickable_window(hwnd: HWND, lparam: LPARAM) -> BOOL {
     let windows = &mut *(lparam.0 as *mut Vec<PickableWindow>);
-    if !is_main_window(hwnd) || is_own_process_window(hwnd) {
+    if !is_pickable_window(hwnd) {
         return BOOL(1);
     }
 
@@ -85,10 +87,69 @@ unsafe extern "system" fn collect_pickable_window(hwnd: HWND, lparam: LPARAM) ->
     BOOL(1)
 }
 
-fn window_title(hwnd: HWND) -> Option<String> {
+/// Window-picker filter only: shown main windows from every workspace.
+/// Hidden windows and Windows shell surfaces are excluded.
+fn is_pickable_window(hwnd: HWND) -> bool {
     unsafe {
-        let mut buffer = [0u16; 512];
-        let len = GetWindowTextW(hwnd, &mut buffer);
+        if hwnd.0.is_null() || !IsWindow(hwnd).as_bool() || !IsWindowVisible(hwnd).as_bool() {
+            return false;
+        }
+    }
+
+    !is_own_process_window(hwnd) && is_main_window(hwnd) && !is_windows_shell_hwnd(hwnd)
+}
+
+fn is_windows_shell_hwnd(hwnd: HWND) -> bool {
+    if let Some(class) = window_class(hwnd) {
+        if is_shell_window_class(&class) {
+            return true;
+        }
+    }
+
+    let Some(path) = full_process_image_path_for_hwnd(hwnd.0 as isize) else {
+        return false;
+    };
+    let executable = Path::new(&path)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or(&path);
+    is_shell_executable(executable, hwnd)
+}
+
+fn is_shell_window_class(class: &str) -> bool {
+    matches!(
+        class,
+        "Shell_TrayWnd"
+            | "Shell_SecondaryTrayWnd"
+            | "Progman"
+            | "WorkerW"
+            | "DV2ControlHost"
+            | "MultitaskingOverlayFrame"
+    )
+}
+
+fn is_shell_executable(executable: &str, hwnd: HWND) -> bool {
+    if executable.eq_ignore_ascii_case("explorer.exe") {
+        return is_shell_explorer_window(hwnd);
+    }
+
+    matches!(
+        executable.to_ascii_lowercase().as_str(),
+        "searchhost.exe" | "shellexperiencehost.exe" | "startmenuexperiencehost.exe"
+    )
+}
+
+fn is_shell_explorer_window(hwnd: HWND) -> bool {
+    match window_class(hwnd).as_deref() {
+        Some("CabinetWClass" | "ExploreWClass") => window_title(hwnd).is_none_or(|t| t.trim().is_empty()),
+        _ => true,
+    }
+}
+
+fn window_class(hwnd: HWND) -> Option<String> {
+    unsafe {
+        let mut buffer = [0u16; 256];
+        let len = GetClassNameW(hwnd, &mut buffer);
         if len <= 0 {
             return None;
         }
@@ -104,6 +165,17 @@ fn is_own_process_window(hwnd: HWND) -> bool {
     }
 }
 
+fn window_title(hwnd: HWND) -> Option<String> {
+    unsafe {
+        let mut buffer = [0u16; 512];
+        let len = GetWindowTextW(hwnd, &mut buffer);
+        if len <= 0 {
+            return None;
+        }
+        Some(String::from_utf16_lossy(&buffer[..len as usize]))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -111,5 +183,18 @@ mod tests {
     #[test]
     fn list_pickable_windows_does_not_panic() {
         let _ = list_pickable_windows();
+    }
+
+    #[test]
+    fn shell_window_classes_are_detected() {
+        assert!(is_shell_window_class("Progman"));
+        assert!(is_shell_window_class("Shell_TrayWnd"));
+        assert!(!is_shell_window_class("CabinetWClass"));
+    }
+
+    #[test]
+    fn shell_host_executables_are_detected() {
+        assert!(is_shell_executable("SearchHost.exe", HWND(std::ptr::null_mut())));
+        assert!(!is_shell_executable("chrome.exe", HWND(std::ptr::null_mut())));
     }
 }
