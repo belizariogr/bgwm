@@ -29,6 +29,8 @@ const ROUTE_RETRY_DELAYS: [Duration; 3] = [
     Duration::from_millis(50),
     Duration::from_millis(100),
 ];
+const KEY_BUFFER_CLEANUP_DELAY: Duration = Duration::from_millis(250);
+const BACKGROUND_POLL_INTERVAL: Duration = Duration::from_millis(200);
 
 #[derive(Debug)]
 struct PendingAppRoute {
@@ -77,6 +79,7 @@ pub struct BgwmApp {
     settings_child: Option<std::process::Child>,
     pending_tray_action: Option<PendingTrayAction>,
     pending_tray_menu_rebuild: bool,
+    key_buffer_cleanup_due: Option<Instant>,
 }
 
 impl BgwmApp {
@@ -99,6 +102,7 @@ impl BgwmApp {
             settings_child: None,
             pending_tray_action: None,
             pending_tray_menu_rebuild: false,
+            key_buffer_cleanup_due: None,
         }
     }
 
@@ -191,20 +195,21 @@ impl BgwmApp {
                 if self.current_workspace == ws {
                     return;
                 }
-                if let Err(e) = virtual_desktop::switch_to_workspace(ws) {
-                    warn!("switch workspace failed: {e}");
+                match virtual_desktop::switch_to_workspace(ws) {
+                    Ok(()) => self.schedule_key_buffer_cleanup(),
+                    Err(e) => warn!("switch workspace failed: {e}"),
                 }
             }
             HotkeyAction::MoveWindowToWorkspace(ws) => {
                 match virtual_desktop::move_focused_window_to_workspace(ws) {
                     Ok(hwnd) => {
                         if self.current_workspace != ws {
-                            if let Err(e) =
-                                virtual_desktop::switch_to_workspace_focusing(ws, hwnd)
+                            if let Err(e) = virtual_desktop::switch_to_workspace_focusing(ws, hwnd)
                             {
                                 warn!("switch after move failed: {e}");
                             }
                         }
+                        self.schedule_key_buffer_cleanup();
                     }
                     Err(e) => warn!("move window failed: {e}"),
                 }
@@ -239,6 +244,7 @@ impl BgwmApp {
                         } else if let Err(e) = virtual_desktop::focus_window(hwnd) {
                             warn!("failed to focus launched app window: {e}");
                         }
+                        self.schedule_key_buffer_cleanup();
                     }
                     Err(e) => warn!("failed to move launched app to workspace {workspace}: {e}"),
                 }
@@ -250,10 +256,13 @@ impl BgwmApp {
 
         if let Some(workspace) = workspace {
             if self.current_workspace != workspace {
-                if let Err(e) = virtual_desktop::switch_to_workspace(workspace) {
-                    warn!(
-                        "failed to switch to workspace {workspace} before launching {executable}: {e}"
-                    );
+                match virtual_desktop::switch_to_workspace(workspace) {
+                    Ok(()) => self.schedule_key_buffer_cleanup(),
+                    Err(e) => {
+                        warn!(
+                            "failed to switch to workspace {workspace} before launching {executable}: {e}"
+                        );
+                    }
                 }
             }
         }
@@ -474,6 +483,7 @@ impl BgwmApp {
     fn poll_pending_app_routes(&mut self) {
         let now = Instant::now();
         let mut completed = Vec::new();
+        let mut schedule_key_buffer_cleanup = false;
 
         for (index, route) in self.pending_app_routes.iter_mut().enumerate() {
             if route.due > now {
@@ -506,6 +516,7 @@ impl BgwmApp {
                     self.routed_processes.insert(route.pid);
                     self.routed_main_hwnd.insert(route.pid, route.hwnd);
                     completed.push(index);
+                    schedule_key_buffer_cleanup = true;
                 }
                 Err(e) if virtual_desktop::is_window_not_found(&e) => {
                     if route.attempt + 1 < ROUTE_RETRY_DELAYS.len() {
@@ -533,6 +544,10 @@ impl BgwmApp {
 
         for index in completed.into_iter().rev() {
             self.pending_app_routes.swap_remove(index);
+        }
+
+        if schedule_key_buffer_cleanup {
+            self.schedule_key_buffer_cleanup();
         }
     }
 
@@ -610,10 +625,47 @@ impl BgwmApp {
         }
 
         self.poll_pending_app_routes();
+        self.poll_key_buffer_cleanup();
         self.poll_config_reload();
         self.refresh_settings_child();
         self.poll_pending_tray_action();
         self.poll_pending_tray_menu_rebuild();
+    }
+
+    fn schedule_key_buffer_cleanup(&mut self) {
+        if self.hotkeys.is_some() {
+            self.key_buffer_cleanup_due = Some(Instant::now() + KEY_BUFFER_CLEANUP_DELAY);
+        }
+    }
+
+    fn poll_key_buffer_cleanup(&mut self) {
+        let Some(due) = self.key_buffer_cleanup_due else {
+            return;
+        };
+
+        let now = Instant::now();
+        if due > now {
+            return;
+        }
+
+        let Some(engine) = &self.hotkeys else {
+            self.key_buffer_cleanup_due = None;
+            return;
+        };
+
+        if engine.any_keys_down() {
+            self.key_buffer_cleanup_due = Some(now + KEY_BUFFER_CLEANUP_DELAY);
+            return;
+        }
+
+        engine.clear_pressed_key_buffer();
+        self.key_buffer_cleanup_due = None;
+    }
+
+    fn next_background_wake(&self) -> Instant {
+        let default_wake = Instant::now() + BACKGROUND_POLL_INTERVAL;
+        self.key_buffer_cleanup_due
+            .map_or(default_wake, |due| due.min(default_wake))
     }
 
     fn refresh_settings_child(&mut self) {
@@ -633,9 +685,7 @@ impl ApplicationHandler<UserEvent> for BgwmApp {
 
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
         self.poll_background();
-        event_loop.set_control_flow(ControlFlow::WaitUntil(
-            Instant::now() + Duration::from_millis(200),
-        ));
+        event_loop.set_control_flow(ControlFlow::WaitUntil(self.next_background_wake()));
     }
 
     fn new_events(&mut self, _event_loop: &ActiveEventLoop, cause: winit::event::StartCause) {
@@ -669,8 +719,9 @@ impl ApplicationHandler<UserEvent> for BgwmApp {
                     return;
                 }
                 if let Some(ws) = menu_workspace_from_id(&id) {
-                    if let Err(e) = virtual_desktop::switch_to_workspace(ws) {
-                        warn!("tray switch failed: {e}");
+                    match virtual_desktop::switch_to_workspace(ws) {
+                        Ok(()) => self.schedule_key_buffer_cleanup(),
+                        Err(e) => warn!("tray switch failed: {e}"),
                     }
                 }
             }

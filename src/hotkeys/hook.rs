@@ -25,12 +25,12 @@ use std::sync::{Arc, Mutex, OnceLock};
 type WakeFn = Arc<dyn Fn(HotkeyAction) + Send + Sync>;
 use std::thread::{self, JoinHandle};
 use thiserror::Error;
-use tracing::error;
+use tracing::{debug, error};
 use windows::Win32::Foundation::{HINSTANCE, LPARAM, LRESULT, WPARAM};
 use windows::Win32::UI::Input::KeyboardAndMouse::{
     GetAsyncKeyState, MapVirtualKeyW, SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT,
-    KEYEVENTF_EXTENDEDKEY, KEYEVENTF_KEYUP, MAPVK_VK_TO_VSC, VIRTUAL_KEY, VK_CONTROL, VK_LWIN,
-    VK_MENU, VK_RWIN, VK_SHIFT,
+    KEYEVENTF_EXTENDEDKEY, KEYEVENTF_KEYUP, MAPVK_VK_TO_VSC, VIRTUAL_KEY, VK_CONTROL, VK_LCONTROL,
+    VK_LMENU, VK_LSHIFT, VK_LWIN, VK_MENU, VK_RCONTROL, VK_RMENU, VK_RSHIFT, VK_RWIN, VK_SHIFT,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     CallNextHookEx, GetMessageW, SetWindowsHookExW, UnhookWindowsHookEx, HC_ACTION,
@@ -42,6 +42,8 @@ use super::{Hotkey, Modifiers};
 
 const VK_SHIFT_I32: i32 = 0x10;
 const VK_CONTROL_I32: i32 = 0x11;
+const FIRST_KEYBOARD_VK: i32 = 0x08;
+const LAST_KEYBOARD_VK: i32 = 0xFE;
 
 /// Tag for synthetic chord-release events (swallowed so they never reach apps/Start).
 const INJECTED_MARKER: usize = 0x4247_574D;
@@ -80,6 +82,15 @@ struct PassthroughChord {
     win_vk: VIRTUAL_KEY,
 }
 
+#[derive(Debug, Default)]
+struct KeyBufferSnapshot {
+    active_chord: Option<ActiveChord>,
+    passthrough_chord: Option<PassthroughChord>,
+    win_held: Option<VIRTUAL_KEY>,
+    suppressed_key: Option<u16>,
+    swallow_extra_win_up: bool,
+}
+
 struct HookState {
     switch: HashMap<BindingKey, u32>,
     r#move: HashMap<BindingKey, u32>,
@@ -93,6 +104,15 @@ struct HookState {
     suppressed_key: Option<u16>,
     /// Swallow one extra physical Win up after chord cleanup (user still holding Win).
     swallow_extra_win_up: bool,
+}
+
+impl HookState {
+    fn has_deferred_win_key(&self) -> bool {
+        self.win_held.is_some()
+            || self.active_chord.is_some()
+            || self.passthrough_chord.is_some()
+            || self.swallow_extra_win_up
+    }
 }
 
 static HOOK_STATE_GLOBAL: OnceLock<Arc<Mutex<HookState>>> = OnceLock::new();
@@ -158,6 +178,18 @@ impl HotkeyEngine {
             state.r#move = bindings_map(r#move);
             state.launch = launch_bindings_map(launch);
         }
+    }
+
+    pub fn any_keys_down(&self) -> bool {
+        any_keyboard_key_down()
+            || self
+                .state
+                .lock()
+                .is_ok_and(|state| state.has_deferred_win_key())
+    }
+
+    pub fn clear_pressed_key_buffer(&self) {
+        clear_pressed_key_buffer(&self.state);
     }
 }
 
@@ -375,6 +407,14 @@ fn inject_win_up(vk: VIRTUAL_KEY) {
 
 fn inject_chord_release(chord: ActiveChord) {
     let mut inputs = Vec::with_capacity(5);
+    push_chord_release(&mut inputs, chord);
+
+    unsafe {
+        SendInput(&inputs, size_of::<INPUT>() as i32);
+    }
+}
+
+fn push_chord_release(inputs: &mut Vec<INPUT>, chord: ActiveChord) {
     inputs.push(key_event(VIRTUAL_KEY(chord.main_vk), true, true));
 
     if chord.modifiers.shift {
@@ -387,9 +427,70 @@ fn inject_chord_release(chord: ActiveChord) {
         inputs.push(key_event(VK_MENU, true, true));
     }
     inputs.push(key_event(chord.win_vk, true, true));
+}
+
+fn clear_pressed_key_buffer(state: &Arc<Mutex<HookState>>) {
+    let snapshot = {
+        let mut st = state.lock().expect("hook state poisoned");
+        let snapshot = KeyBufferSnapshot {
+            active_chord: st.active_chord.take(),
+            passthrough_chord: st.passthrough_chord.take(),
+            win_held: st.win_held.take(),
+            suppressed_key: st.suppressed_key.take(),
+            swallow_extra_win_up: st.swallow_extra_win_up,
+        };
+        st.swallow_extra_win_up = false;
+        snapshot
+    };
+
+    if snapshot.active_chord.is_none()
+        && snapshot.passthrough_chord.is_none()
+        && snapshot.win_held.is_none()
+        && snapshot.suppressed_key.is_none()
+        && !snapshot.swallow_extra_win_up
+    {
+        return;
+    }
+
+    debug!("clearing stale hotkey key buffer");
+
+    let mut inputs = Vec::with_capacity(20);
+
+    if let Some(chord) = snapshot.active_chord {
+        push_chord_release(&mut inputs, chord);
+    }
+    if let Some(chord) = snapshot.passthrough_chord {
+        inputs.push(key_event(chord.win_vk, true, false));
+    }
+    if let Some(win_vk) = snapshot.win_held {
+        inputs.push(key_event(win_vk, true, true));
+    }
+    if let Some(vk) = snapshot.suppressed_key {
+        inputs.push(key_event(VIRTUAL_KEY(vk), true, true));
+    }
+
+    push_modifier_releases(&mut inputs);
 
     unsafe {
         SendInput(&inputs, size_of::<INPUT>() as i32);
+    }
+}
+
+fn push_modifier_releases(inputs: &mut Vec<INPUT>) {
+    for vk in [
+        VK_LWIN,
+        VK_RWIN,
+        VK_SHIFT,
+        VK_LSHIFT,
+        VK_RSHIFT,
+        VK_CONTROL,
+        VK_LCONTROL,
+        VK_RCONTROL,
+        VK_MENU,
+        VK_LMENU,
+        VK_RMENU,
+    ] {
+        inputs.push(key_event(vk, true, true));
     }
 }
 
@@ -443,6 +544,10 @@ fn is_down(vk: i32) -> bool {
     unsafe { (GetAsyncKeyState(vk) as u16) & 0x8000 != 0 }
 }
 
+fn any_keyboard_key_down() -> bool {
+    (FIRST_KEYBOARD_VK..=LAST_KEYBOARD_VK).any(is_down)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -451,5 +556,21 @@ mod tests {
     fn win_held_counts_as_win_modifier() {
         let m = current_modifiers(true);
         assert!(m.win);
+    }
+
+    #[test]
+    fn deferred_win_key_counts_as_key_down() {
+        let state = HookState {
+            switch: HashMap::new(),
+            r#move: HashMap::new(),
+            launch: HashMap::new(),
+            win_held: Some(VK_LWIN),
+            active_chord: None,
+            passthrough_chord: None,
+            suppressed_key: None,
+            swallow_extra_win_up: false,
+        };
+
+        assert!(state.has_deferred_win_key());
     }
 }
