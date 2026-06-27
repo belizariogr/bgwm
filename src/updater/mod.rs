@@ -164,7 +164,11 @@ fn download_and_launch(release: &ReleaseInfo) -> Result<(), String> {
     std::fs::write(&path, &bytes).map_err(|e| format!("failed to write installer: {e}"))?;
 
     info!("launching installer {}", path.display());
+    // Inno Setup silent flags: install without wizard pages or prompts so the
+    // update applies without further user clicks. The installer closes the
+    // running app and relaunches it after a silent install.
     std::process::Command::new(&path)
+        .args(["/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART"])
         .spawn()
         .map_err(|e| format!("failed to launch installer: {e}"))?;
     Ok(())
