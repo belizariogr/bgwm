@@ -53,7 +53,7 @@ target\release\bgwm.exe
 Settings are stored at:
 
 ```text
-%LOCALAPPDATA%\bgwm\config.json
+%USERPROFILE%\.config\bgwm\config.json
 ```
 
 Workspace indices in the UI are **1-based** (Workspace 1 = first virtual desktop).

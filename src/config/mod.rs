@@ -11,9 +11,10 @@ use std::path::{Path, PathBuf};
 const CONFIG_FILE: &str = "config.json";
 
 pub fn config_dir() -> PathBuf {
-    std::env::var_os("LOCALAPPDATA")
+    std::env::var_os("USERPROFILE")
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("."))
+        .join(".config")
         .join("bgwm")
 }
 

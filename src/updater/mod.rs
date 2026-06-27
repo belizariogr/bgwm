@@ -32,7 +32,7 @@ const REPROMPT_INTERVAL_SECS: u64 = 2 * 24 * 60 * 60;
 /// How often the background thread re-checks for updates.
 const CHECK_INTERVAL: Duration = Duration::from_secs(60 * 60);
 
-/// Persisted update prompt state (`%LOCALAPPDATA%\bgwm\update_state.json`).
+/// Persisted update prompt state (`%USERPROFILE%\.config\bgwm\update_state.json`).
 #[derive(Debug, Default, Serialize, Deserialize)]
 struct UpdateState {
     /// Last version the user explicitly declined; suppresses re-prompting it.
