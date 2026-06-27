@@ -261,6 +261,13 @@ impl SettingsApp {
             {
                 self.config.auto_update = auto_update;
             }
+
+            ui.add_space(10.0);
+            if ui.button("Check for updates now").clicked() {
+                crate::updater::force_check();
+                self.status = Some("Checking for updates…".into());
+                self.error = None;
+            }
         });
     }
 

@@ -12,14 +12,15 @@
 mod http;
 
 use std::path::PathBuf;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 use tracing::{info, warn};
 use winit::event_loop::EventLoopProxy;
 
 use crate::app::UserEvent;
-use crate::config;
+use crate::config::{self, Config};
 
 const GITHUB_LATEST_RELEASE_URL: &str =
     "https://api.github.com/repos/belizariogr/bgwm/releases/latest";
@@ -27,6 +28,8 @@ const GITHUB_ACCEPT: &str = "application/vnd.github+json";
 const UPDATE_STATE_FILE: &str = "update_state.json";
 /// Minimum delay between update prompts (2 days).
 const REPROMPT_INTERVAL_SECS: u64 = 2 * 24 * 60 * 60;
+/// How often the background thread re-checks for updates.
+const CHECK_INTERVAL: Duration = Duration::from_secs(60 * 60);
 
 /// Persisted update prompt state (`%LOCALAPPDATA%\bgwm\update_state.json`).
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -63,36 +66,78 @@ struct ReleaseInfo {
     installer_name: String,
 }
 
-/// Runs the update check in a background thread so the event loop is never
-/// blocked by network I/O or the (modal) prompt.
-pub fn spawn_startup_check(proxy: EventLoopProxy<UserEvent>) {
-    std::thread::spawn(move || {
-        if let Err(e) = run_check(&proxy) {
-            warn!("update check failed: {e}");
+/// Spawns a background thread that checks for updates on launch and then once
+/// every hour. The check only runs while the user has auto-update enabled,
+/// re-reading the setting each cycle so toggling it takes effect without a
+/// restart. Network I/O and the (modal) prompt never block the event loop.
+pub fn spawn_update_checker(proxy: EventLoopProxy<UserEvent>, config: Arc<Mutex<Config>>) {
+    std::thread::spawn(move || loop {
+        let enabled = match config.lock() {
+            Ok(cfg) => cfg.auto_update,
+            Err(_) => false,
+        };
+        if enabled {
+            if let Err(e) = run_check(Some(&proxy), false) {
+                warn!("update check failed: {e}");
+            }
+        }
+        std::thread::sleep(CHECK_INTERVAL);
+    });
+}
+
+/// Forces an update attempt requested by the user from the settings window.
+///
+/// Clears the throttle timestamp and the previously declined version so the
+/// normal update routine runs immediately, then reuses it. Runs on a worker
+/// thread so the settings UI stays responsive.
+pub fn force_check() {
+    std::thread::spawn(|| {
+        clear_state();
+        if let Err(e) = run_check(None, true) {
+            warn!("manual update check failed: {e}");
+            notify_info(
+                "BGWM — Update",
+                &format!("Could not check for updates.\n\n{e}"),
+            );
         }
     });
 }
 
-fn run_check(proxy: &EventLoopProxy<UserEvent>) -> Result<(), String> {
+/// Runs a single update check.
+///
+/// When `manual` is true the prompt throttle and declined-version guards are
+/// skipped and an informational dialog is shown if there is no update, since
+/// the check was explicitly requested by the user. On a successful download the
+/// app is asked to exit via `proxy` (when available) so the installer can
+/// replace the binary; manual checks rely on the installer to close the app.
+fn run_check(proxy: Option<&EventLoopProxy<UserEvent>>, manual: bool) -> Result<(), String> {
     let Some(release) = fetch_latest_release()? else {
+        if manual {
+            notify_info(
+                "BGWM — Update",
+                "You are already running the latest version of BGWM.",
+            );
+        }
         return Ok(());
     };
 
     let mut state = load_state();
 
-    if state.declined_version.as_deref() == Some(release.version.as_str()) {
-        info!(
-            "update {} was previously declined; not prompting again",
-            release.version
-        );
-        return Ok(());
-    }
-
-    if let Some(last_prompt_at) = state.last_prompt_at {
-        let elapsed = now_secs().saturating_sub(last_prompt_at);
-        if elapsed < REPROMPT_INTERVAL_SECS {
-            info!("skipping update prompt; last prompt was less than 2 days ago");
+    if !manual {
+        if state.declined_version.as_deref() == Some(release.version.as_str()) {
+            info!(
+                "update {} was previously declined; not prompting again",
+                release.version
+            );
             return Ok(());
+        }
+
+        if let Some(last_prompt_at) = state.last_prompt_at {
+            let elapsed = now_secs().saturating_sub(last_prompt_at);
+            if elapsed < REPROMPT_INTERVAL_SECS {
+                info!("skipping update prompt; last prompt was less than 2 days ago");
+                return Ok(());
+            }
         }
     }
 
@@ -104,7 +149,9 @@ fn run_check(proxy: &EventLoopProxy<UserEvent>) -> Result<(), String> {
         match download_and_launch(&release) {
             Ok(()) => {
                 info!("update launched; requesting app shutdown");
-                let _ = proxy.send_event(UserEvent::QuitForUpdate);
+                if let Some(proxy) = proxy {
+                    let _ = proxy.send_event(UserEvent::QuitForUpdate);
+                }
             }
             Err(e) => warn!("failed to download or launch update: {e}"),
         }
@@ -202,6 +249,25 @@ fn prompt_user(release: &ReleaseInfo) -> bool {
     result == IDYES
 }
 
+/// Shows an informational, OK-only message box.
+fn notify_info(title: &str, text: &str) {
+    use windows::core::PCWSTR;
+    use windows::Win32::UI::WindowsAndMessaging::{
+        MessageBoxW, MB_ICONINFORMATION, MB_OK, MB_SETFOREGROUND, MB_TOPMOST,
+    };
+
+    let text_w = wide(text);
+    let title_w = wide(title);
+    unsafe {
+        MessageBoxW(
+            None,
+            PCWSTR(text_w.as_ptr()),
+            PCWSTR(title_w.as_ptr()),
+            MB_OK | MB_ICONINFORMATION | MB_SETFOREGROUND | MB_TOPMOST,
+        );
+    }
+}
+
 fn is_installer_asset(name: &str) -> bool {
     let name = name.to_ascii_lowercase();
     name.starts_with("bgwm-setup") && name.ends_with(".exe")
@@ -242,6 +308,12 @@ fn sanitize_filename(name: &str) -> String {
 
 fn state_path() -> PathBuf {
     config::config_dir().join(UPDATE_STATE_FILE)
+}
+
+/// Resets the persisted prompt throttle and declined-version, so the next check
+/// prompts again regardless of prior history.
+fn clear_state() {
+    save_state(&UpdateState::default());
 }
 
 fn load_state() -> UpdateState {

@@ -156,11 +156,8 @@ impl BgwmApp {
             Err(e) => error!("failed to create child process job: {e}"),
         }
 
-        let auto_update = self.config.lock().expect("config poisoned").auto_update;
-        if auto_update {
-            if let Some(proxy) = self.proxy.clone() {
-                crate::updater::spawn_startup_check(proxy);
-            }
+        if let Some(proxy) = self.proxy.clone() {
+            crate::updater::spawn_update_checker(proxy, Arc::clone(&self.config));
         }
     }
 
