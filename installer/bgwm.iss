@@ -43,6 +43,9 @@ ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 CloseApplications=force
 CloseApplicationsFilter={#MyAppExeName}
+; The running app is force-closed (and, for silent updates, relaunched) by the
+; [Code]/[Run] logic below, so let Setup not try to restart it itself.
+RestartApplications=no
 MinVersion=10.0
 
 [Languages]
@@ -63,9 +66,11 @@ Name: "{group}\{cm:UninstallProgram,{#MyAppName}}"; Filename: "{uninstallexe}"
 Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: desktopicon; Comment: "{#MyAppDescription}"
 
 [Run]
-; Runs after interactive installs (via the post-install checkbox) and after
-; silent updates, so BGWM relaunches once the new version is in place.
-Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#StringChange(MyAppName, '&', '&&')}}"; Flags: nowait postinstall
+; Interactive installs: offer a "Launch BGWM" checkbox on the Finished page.
+Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#StringChange(MyAppName, '&', '&&')}}"; Flags: nowait postinstall skipifsilent
+; Silent updates: always relaunch BGWM once the new version is in place,
+; without requiring any user interaction.
+Filename: "{app}\{#MyAppExeName}"; Flags: nowait; Check: WizardSilent
 
 [UninstallDelete]
 Type: filesandordirs; Name: "{app}\assets"
@@ -75,6 +80,25 @@ const
   RunKey = 'Software\Microsoft\Windows\CurrentVersion\Run';
   LegacyStartupApprovedKey = 'Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run';
   StartupValueName = 'BGWM';
+
+{ Force-close every running BGWM instance (regardless of where it was launched
+  from) before files are replaced. Runs without prompting the user. }
+function PrepareToInstall(var NeedsRestart: Boolean): String;
+var
+  ResultCode: Integer;
+begin
+  NeedsRestart := False;
+  { Kill by image name only (no /T): the installer was launched by a bgwm.exe
+    process, so terminating the process tree would kill the installer itself. }
+  Exec(
+    ExpandConstant('{sys}\taskkill.exe'),
+    '/F /IM "{#MyAppExeName}"',
+    '',
+    SW_HIDE,
+    ewWaitUntilTerminated,
+    ResultCode);
+  Result := '';
+end;
 
 procedure RemoveStartupRegistrationIfInstalled();
 var

@@ -11,6 +11,7 @@
 
 mod http;
 
+use std::os::windows::process::CommandExt;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -148,9 +149,17 @@ fn run_check(proxy: Option<&EventLoopProxy<UserEvent>>, manual: bool) -> Result<
     if prompt_user(&release) {
         match download_and_launch(&release) {
             Ok(()) => {
-                info!("update launched; requesting app shutdown");
+                info!("update launched; shutting down running BGWM instances");
+                // Extra protection layer (independent of the installer's own
+                // close logic): make sure every BGWM process is gone so nothing
+                // keeps the executable locked. First terminate the *other*
+                // instances (e.g. settings <-> background app), then close this
+                // process — gracefully via the event loop when available.
+                terminate_other_bgwm_instances();
                 if let Some(proxy) = proxy {
                     let _ = proxy.send_event(UserEvent::QuitForUpdate);
+                } else {
+                    std::process::exit(0);
                 }
             }
             Err(e) => warn!("failed to download or launch update: {e}"),
@@ -211,13 +220,25 @@ fn download_and_launch(release: &ReleaseInfo) -> Result<(), String> {
     std::fs::write(&path, &bytes).map_err(|e| format!("failed to write installer: {e}"))?;
 
     info!("launching installer {}", path.display());
-    // Inno Setup silent flags: install without wizard pages or prompts so the
-    // update applies without further user clicks. The installer closes the
-    // running app and relaunches it after a silent install.
-    std::process::Command::new(&path)
-        .args(["/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART"])
+    // Inno Setup `/SILENT`: shows the install progress window but skips the
+    // wizard pages and confirmation prompts, so the user sees the setup running
+    // without having to click through it. The installer closes the running app
+    // and relaunches it afterwards.
+    //
+    // CREATE_BREAKAWAY_FROM_JOB detaches the installer from BGWM's job object.
+    // Otherwise, when the settings window (a job member) launches the installer,
+    // terminating the background app would close the job and kill the installer
+    // mid-update. The job sets JOB_OBJECT_LIMIT_BREAKAWAY_OK to allow this.
+    const CREATE_BREAKAWAY_FROM_JOB: u32 = 0x0100_0000;
+    let args = ["/SILENT", "/SUPPRESSMSGBOXES", "/NORESTART"];
+    let spawn = std::process::Command::new(&path)
+        .args(args)
+        .creation_flags(CREATE_BREAKAWAY_FROM_JOB)
         .spawn()
-        .map_err(|e| format!("failed to launch installer: {e}"))?;
+        // If breakaway isn't permitted (e.g. an external job), fall back to a
+        // normal spawn rather than failing the update outright.
+        .or_else(|_| std::process::Command::new(&path).args(args).spawn());
+    spawn.map_err(|e| format!("failed to launch installer: {e}"))?;
     Ok(())
 }
 
@@ -335,6 +356,58 @@ fn save_state(state: &UpdateState) {
             }
         }
         Err(e) => warn!("failed to serialize update state: {e}"),
+    }
+}
+
+/// Force-terminates every other running BGWM process (background app and/or
+/// settings window), leaving the current process untouched. The installer
+/// (`bgwm-setup-*.exe`) has a different image name and is never matched.
+fn terminate_other_bgwm_instances() {
+    use windows::Win32::Foundation::CloseHandle;
+    use windows::Win32::System::Diagnostics::ToolHelp::{
+        CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W,
+        TH32CS_SNAPPROCESS,
+    };
+    use windows::Win32::System::Threading::{
+        GetCurrentProcessId, OpenProcess, TerminateProcess, PROCESS_TERMINATE,
+    };
+
+    let current_pid = unsafe { GetCurrentProcessId() };
+    unsafe {
+        let Ok(snapshot) = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) else {
+            return;
+        };
+        if snapshot.is_invalid() {
+            return;
+        }
+
+        let mut entry = PROCESSENTRY32W {
+            dwSize: std::mem::size_of::<PROCESSENTRY32W>() as u32,
+            ..Default::default()
+        };
+
+        if Process32FirstW(snapshot, &mut entry).is_ok() {
+            loop {
+                let end = entry
+                    .szExeFile
+                    .iter()
+                    .position(|&c| c == 0)
+                    .unwrap_or(entry.szExeFile.len());
+                let name = String::from_utf16_lossy(&entry.szExeFile[..end]);
+                if entry.th32ProcessID != current_pid && name.eq_ignore_ascii_case("bgwm.exe") {
+                    if let Ok(handle) = OpenProcess(PROCESS_TERMINATE, false, entry.th32ProcessID) {
+                        let _ = TerminateProcess(handle, 0);
+                        let _ = CloseHandle(handle);
+                        info!("terminated BGWM instance pid {}", entry.th32ProcessID);
+                    }
+                }
+                if Process32NextW(snapshot, &mut entry).is_err() {
+                    break;
+                }
+            }
+        }
+
+        let _ = CloseHandle(snapshot);
     }
 }
 

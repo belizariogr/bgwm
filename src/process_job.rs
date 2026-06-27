@@ -7,7 +7,7 @@ use windows::Win32::Foundation::{CloseHandle, HANDLE};
 use windows::Win32::System::JobObjects::{
     AssignProcessToJobObject, CreateJobObjectW, JobObjectExtendedLimitInformation,
     SetInformationJobObject, TerminateJobObject, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
-    JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+    JOB_OBJECT_LIMIT_BREAKAWAY_OK, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
 };
 
 /// Windows job object that terminates assigned child processes when closed.
@@ -20,7 +20,12 @@ impl ChildProcessJob {
         unsafe {
             let handle = CreateJobObjectW(None, None)?;
             let mut info = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
-            info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+            // KILL_ON_JOB_CLOSE: assigned children die with the app.
+            // BREAKAWAY_OK: lets the updater spawn the installer with
+            // CREATE_BREAKAWAY_FROM_JOB so it survives when the app (and its
+            // job) is terminated during an update.
+            info.BasicLimitInformation.LimitFlags =
+                JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE | JOB_OBJECT_LIMIT_BREAKAWAY_OK;
             SetInformationJobObject(
                 handle,
                 JobObjectExtendedLimitInformation,
