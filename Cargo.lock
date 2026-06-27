@@ -544,6 +544,7 @@ dependencies = [
 name = "bgwm"
 version = "0.8.1"
 dependencies = [
+ "ab_glyph",
  "crossbeam-channel",
  "eframe",
  "image",

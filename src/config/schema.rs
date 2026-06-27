@@ -60,6 +60,10 @@ pub struct Config {
     pub switch_hotkeys: HashMap<String, String>,
     /// 1-based workspace index → hotkey string.
     pub move_hotkeys: HashMap<String, String>,
+    /// 1-based workspace index → icon spec (`"<style>:<name>"`) shown in the tray.
+    /// Missing/empty means the workspace number is rendered instead.
+    #[serde(default)]
+    pub workspace_icons: HashMap<String, String>,
     pub app_rules: Vec<AppRule>,
     #[serde(default)]
     pub settings_window: SettingsWindow,
@@ -79,6 +83,7 @@ impl Default for Config {
             version: CONFIG_VERSION,
             switch_hotkeys,
             move_hotkeys,
+            workspace_icons: HashMap::new(),
             app_rules: Vec::new(),
             settings_window: SettingsWindow::default(),
             startup: StartupSettings::default(),
@@ -176,6 +181,10 @@ impl Config {
             seen.push(hotkey);
         }
 
+        for ws in self.workspace_icons.keys() {
+            validate_workspace_key(ws)?;
+        }
+
         if self.settings_window.width < MIN_SETTINGS_WINDOW_WIDTH
             || self.settings_window.width > MAX_SETTINGS_WINDOW_WIDTH
             || self.settings_window.height < MIN_SETTINGS_WINDOW_HEIGHT
@@ -223,6 +232,14 @@ impl Config {
         }
         out.sort_by_key(|(ws, _)| *ws);
         Ok(out)
+    }
+
+    /// Icon spec (`"<style>:<name>"`) configured for a 1-based workspace, if any.
+    pub fn workspace_icon(&self, workspace: u32) -> Option<&str> {
+        self.workspace_icons
+            .get(&workspace.to_string())
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty())
     }
 
     pub fn launch_bindings(&self) -> Result<Vec<(String, Hotkey)>, ConfigError> {

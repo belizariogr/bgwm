@@ -15,6 +15,7 @@ name = "bgwm"
 path = "src/main.rs"
 
 [dependencies]
+ab_glyph = "0.2"
 crossbeam-channel = "0.5"
 eframe = { version = "0.31", default-features = true, features = ["default_fonts", "glow"] }
 image = "0.25"

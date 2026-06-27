@@ -8,11 +8,12 @@ use windows::Win32::UI::Controls::Dialogs::{
     GetOpenFileNameW, OFN_EXPLORER, OFN_FILEMUSTEXIST, OFN_PATHMUSTEXIST, OPENFILENAMEW,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    EnumWindows, GetClassNameW, GetWindowTextW, GetWindowThreadProcessId, IsWindow,
-    IsWindowVisible,
+    EnumWindows, GetClassNameW, GetWindowTextW, GetWindowThreadProcessId, IsWindow, IsWindowVisible,
 };
 
-use crate::window_tracking::{executable_for_hwnd, full_process_image_path_for_hwnd, is_main_window};
+use crate::window_tracking::{
+    executable_for_hwnd, full_process_image_path_for_hwnd, is_main_window,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PickableWindow {
@@ -77,7 +78,8 @@ unsafe extern "system" fn collect_pickable_window(hwnd: HWND, lparam: LPARAM) ->
         return BOOL(1);
     }
 
-    let full_path = full_process_image_path_for_hwnd(hwnd.0 as isize).unwrap_or_else(|| executable.clone());
+    let full_path =
+        full_process_image_path_for_hwnd(hwnd.0 as isize).unwrap_or_else(|| executable.clone());
     let title = window_title(hwnd).unwrap_or_else(|| "(Untitled)".into());
     windows.push(PickableWindow {
         title,
@@ -141,7 +143,9 @@ fn is_shell_executable(executable: &str, hwnd: HWND) -> bool {
 
 fn is_shell_explorer_window(hwnd: HWND) -> bool {
     match window_class(hwnd).as_deref() {
-        Some("CabinetWClass" | "ExploreWClass") => window_title(hwnd).is_none_or(|t| t.trim().is_empty()),
+        Some("CabinetWClass" | "ExploreWClass") => {
+            window_title(hwnd).is_none_or(|t| t.trim().is_empty())
+        }
         _ => true,
     }
 }
@@ -194,7 +198,13 @@ mod tests {
 
     #[test]
     fn shell_host_executables_are_detected() {
-        assert!(is_shell_executable("SearchHost.exe", HWND(std::ptr::null_mut())));
-        assert!(!is_shell_executable("chrome.exe", HWND(std::ptr::null_mut())));
+        assert!(is_shell_executable(
+            "SearchHost.exe",
+            HWND(std::ptr::null_mut())
+        ));
+        assert!(!is_shell_executable(
+            "chrome.exe",
+            HWND(std::ptr::null_mut())
+        ));
     }
 }

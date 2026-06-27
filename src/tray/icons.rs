@@ -1,7 +1,10 @@
 use std::path::PathBuf;
 use std::sync::OnceLock;
 
+use ab_glyph::{Font, FontRef, PxScale};
 use tray_icon::Icon;
+
+use crate::font_icons::{IconRef, IconStyle};
 use windows::core::PCWSTR;
 use windows::Win32::Foundation::ERROR_SUCCESS;
 use windows::Win32::System::Registry::{
@@ -45,11 +48,14 @@ struct TrayAssets {
 }
 
 static TRAY_ASSETS: OnceLock<TrayAssets> = OnceLock::new();
+static ICON_FONTS: OnceLock<[Option<FontRef<'static>>; 3]> = OnceLock::new();
 
 const DIGIT_GAP: u32 = 0;
 const CANVAS_PADDING: u32 = 1;
 
-pub fn workspace_icon(workspace: u32) -> Result<Icon, tray_icon::Error> {
+/// Builds the tray icon for `workspace`. When `icon` is set, the matching
+/// Font Awesome glyph is rendered at full size instead of the bordered number.
+pub fn workspace_icon(workspace: u32, icon: Option<IconRef>) -> Result<Icon, tray_icon::Error> {
     let assets = TRAY_ASSETS.get_or_init(|| load_tray_assets().unwrap_or_else(|_| empty_assets()));
     if assets.border.2.is_empty() {
         return Err(tray_icon::Error::OsError(std::io::Error::new(
@@ -58,12 +64,117 @@ pub fn workspace_icon(workspace: u32) -> Result<Icon, tray_icon::Error> {
         )));
     }
 
-    let (width, height, rgba) = compose_workspace_icon(workspace, assets);
+    let (width, height, rgba) = match icon {
+        Some(icon) => compose_icon_glyph(icon, assets)
+            .unwrap_or_else(|| compose_workspace_icon(workspace, assets)),
+        None => compose_workspace_icon(workspace, assets),
+    };
     Icon::from_rgba(rgba, width, height).map_err(|e| {
         tray_icon::Error::OsError(std::io::Error::new(
             std::io::ErrorKind::InvalidData,
             e.to_string(),
         ))
+    })
+}
+
+/// Whether Windows is currently using the light system theme. Exposed so the
+/// app loop can re-render the tray icon when the theme changes.
+pub fn uses_light_theme() -> bool {
+    system_uses_light_theme()
+}
+
+fn icon_font(style: IconStyle) -> Option<&'static FontRef<'static>> {
+    ICON_FONTS
+        .get_or_init(|| IconStyle::ALL.map(|style| FontRef::try_from_slice(style.font_ttf()).ok()))
+        [style.index()]
+    .as_ref()
+}
+
+/// Renders a Font Awesome glyph at full canvas size (no border), centered and
+/// scaled to fill the icon area. Color follows the system theme.
+fn compose_icon_glyph(icon: IconRef, assets: &TrayAssets) -> Option<RgbaIcon> {
+    let font = icon_font(icon.style)?;
+    let glyph_id = font.glyph_id(icon.ch);
+    if glyph_id.0 == 0 {
+        return None;
+    }
+
+    let (canvas_w, canvas_h, _) = &assets.border;
+    let (canvas_w, canvas_h) = (*canvas_w, *canvas_h);
+    if canvas_w == 0 || canvas_h == 0 {
+        return None;
+    }
+    let mut canvas = vec![0u8; (canvas_w * canvas_h * 4) as usize];
+    let invert_colors = system_uses_light_theme();
+
+    // Rasterize once at the canvas height to measure the glyph, then rescale so
+    // the actual outline fills the full canvas and rasterize at the final size.
+    let probe = rasterize_glyph(font, glyph_id, canvas_h as f32)?;
+    let fit = (canvas_w as f32 / probe.width as f32).min(canvas_h as f32 / probe.height as f32);
+    let final_px = (canvas_h as f32 * fit).max(1.0);
+    let glyph = rasterize_glyph(font, glyph_id, final_px)?;
+
+    let start_x = canvas_w.saturating_sub(glyph.width) / 2;
+    let start_y = canvas_h.saturating_sub(glyph.height) / 2;
+
+    let color: [u8; 3] = if invert_colors {
+        [0, 0, 0]
+    } else {
+        [255, 255, 255]
+    };
+
+    for y in 0..glyph.height {
+        for x in 0..glyph.width {
+            let coverage = glyph.coverage[(y * glyph.width + x) as usize];
+            if coverage <= 0.0 {
+                continue;
+            }
+            let pixel = [
+                color[0],
+                color[1],
+                color[2],
+                (coverage.clamp(0.0, 1.0) * 255.0).round() as u8,
+            ];
+            blit_pixel(
+                &mut canvas,
+                canvas_w,
+                canvas_h,
+                (start_x + x) as i32,
+                (start_y + y) as i32,
+                &pixel,
+            );
+        }
+    }
+
+    Some((canvas_w, canvas_h, canvas))
+}
+
+struct GlyphBitmap {
+    width: u32,
+    height: u32,
+    coverage: Vec<f32>,
+}
+
+fn rasterize_glyph(
+    font: &FontRef<'static>,
+    glyph_id: ab_glyph::GlyphId,
+    px: f32,
+) -> Option<GlyphBitmap> {
+    let glyph = glyph_id.with_scale(PxScale::from(px));
+    let outline = font.outline_glyph(glyph)?;
+    let bounds = outline.px_bounds();
+    let width = bounds.width().ceil().max(1.0) as u32;
+    let height = bounds.height().ceil().max(1.0) as u32;
+    let mut coverage = vec![0.0f32; (width * height) as usize];
+    outline.draw(|x, y, c| {
+        if x < width && y < height {
+            coverage[(y * width + x) as usize] = c;
+        }
+    });
+    Some(GlyphBitmap {
+        width,
+        height,
+        coverage,
     })
 }
 
@@ -189,6 +300,7 @@ fn wide_null(value: &str) -> Vec<u16> {
     value.encode_utf16().chain(std::iter::once(0)).collect()
 }
 
+#[allow(clippy::too_many_arguments)]
 fn blit_digit_scaled(
     canvas: &mut [u8],
     canvas_w: u32,
@@ -400,7 +512,32 @@ mod tests {
 
     #[test]
     fn workspace_icon_builds_for_two_digits() {
-        workspace_icon(12).expect("icon for workspace 12 should build");
+        workspace_icon(12, None).expect("icon for workspace 12 should build");
+    }
+
+    fn some_icon() -> IconRef {
+        let icon = crate::font_icons::icons()
+            .iter()
+            .find(|i| i.style == IconStyle::Solid)
+            .expect("solid icons exist");
+        IconRef {
+            ch: icon.ch,
+            style: icon.style,
+        }
+    }
+
+    #[test]
+    fn workspace_icon_builds_for_custom_glyph() {
+        workspace_icon(1, Some(some_icon())).expect("icon for custom glyph should build");
+    }
+
+    #[test]
+    fn custom_glyph_composition_fits_canvas() {
+        let assets = assets();
+        let (w, h, rgba) = compose_icon_glyph(some_icon(), &assets).expect("glyph composed");
+        assert_eq!((w, h), (18, 18));
+        let opaque = rgba.chunks(4).filter(|px| px[3] > 0).count();
+        assert!(opaque > 0);
     }
 
     #[test]

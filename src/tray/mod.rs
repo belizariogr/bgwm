@@ -1,6 +1,6 @@
 mod icons;
 
-pub use icons::workspace_icon;
+pub use icons::{uses_light_theme, workspace_icon};
 
 use thiserror::Error;
 use tray_icon::menu::{Menu, MenuEvent, MenuId, MenuItem, PredefinedMenuItem};
@@ -30,8 +30,12 @@ pub struct TrayController {
 }
 
 impl TrayController {
-    pub fn new(workspace_count: u32, current_workspace: u32) -> Result<Self, TrayError> {
-        let icon = workspace_icon(current_workspace)?;
+    pub fn new(
+        workspace_count: u32,
+        current_workspace: u32,
+        current_icon: Option<crate::font_icons::IconRef>,
+    ) -> Result<Self, TrayError> {
+        let icon = workspace_icon(current_workspace, current_icon)?;
         let (menu, workspace_items, settings_id, exit_id) =
             build_menu(workspace_count, current_workspace)?;
 
@@ -53,8 +57,9 @@ impl TrayController {
         &self,
         current_workspace: u32,
         workspace_count: u32,
+        current_icon: Option<crate::font_icons::IconRef>,
     ) -> Result<(), TrayError> {
-        let icon = workspace_icon(current_workspace)?;
+        let icon = workspace_icon(current_workspace, current_icon)?;
         self.tray.set_icon(Some(icon))?;
         self.tray
             .set_tooltip(Some(format!("BGWM — Workspace {current_workspace}")))?;
@@ -81,6 +86,7 @@ impl TrayController {
         &mut self,
         workspace_count: u32,
         current_workspace: u32,
+        current_icon: Option<crate::font_icons::IconRef>,
     ) -> Result<(), TrayError> {
         let (menu, workspace_items, settings_id, exit_id) =
             build_menu(workspace_count, current_workspace)?;
@@ -88,7 +94,7 @@ impl TrayController {
         self.workspace_items = workspace_items;
         self.settings_id = settings_id;
         self.exit_id = exit_id;
-        self.set_workspace(current_workspace, workspace_count)
+        self.set_workspace(current_workspace, workspace_count, current_icon)
     }
 }
 

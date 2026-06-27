@@ -7,9 +7,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
     EVENT_OBJECT_DESTROY, EVENT_OBJECT_SHOW, WINEVENT_OUTOFCONTEXT,
 };
 
-use super::{
-    full_process_image_path_for_hwnd, is_main_window, process_id_for_hwnd,
-};
+use super::{full_process_image_path_for_hwnd, is_main_window, process_id_for_hwnd};
 
 #[derive(Debug, Clone)]
 pub enum AppWindowEvent {

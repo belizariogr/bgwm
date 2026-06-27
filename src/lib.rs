@@ -1,4 +1,5 @@
 pub mod config;
+pub mod font_icons;
 pub mod hotkeys;
 pub mod virtual_desktop;
 pub mod window_tracking;

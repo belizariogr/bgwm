@@ -80,6 +80,7 @@ pub struct BgwmApp {
     pending_tray_action: Option<PendingTrayAction>,
     pending_tray_menu_rebuild: bool,
     key_buffer_cleanup_due: Option<Instant>,
+    last_light_theme: Option<bool>,
 }
 
 impl BgwmApp {
@@ -103,6 +104,24 @@ impl BgwmApp {
             pending_tray_action: None,
             pending_tray_menu_rebuild: false,
             key_buffer_cleanup_due: None,
+            last_light_theme: None,
+        }
+    }
+
+    /// Resolves the configured Font Awesome glyph for a workspace, if any.
+    fn icon_for_workspace(&self, workspace: u32) -> Option<crate::font_icons::IconRef> {
+        let config = self.config.lock().expect("config poisoned");
+        config
+            .workspace_icon(workspace)
+            .and_then(crate::font_icons::resolve)
+    }
+
+    fn refresh_tray_icon(&self) {
+        if let Some(tray) = &self.tray {
+            let icon = self.icon_for_workspace(self.current_workspace);
+            if let Err(e) = tray.set_workspace(self.current_workspace, self.workspace_count, icon) {
+                warn!("failed to update tray icon: {e}");
+            }
         }
     }
 
@@ -115,7 +134,9 @@ impl BgwmApp {
         self.current_workspace =
             virtual_desktop::current_workspace_index().unwrap_or(WORKSPACE_INDEX_BASE);
 
-        match TrayController::new(self.workspace_count, self.current_workspace) {
+        self.last_light_theme = Some(crate::tray::uses_light_theme());
+        let current_icon = self.icon_for_workspace(self.current_workspace);
+        match TrayController::new(self.workspace_count, self.current_workspace, current_icon) {
             Ok(tray) => self.tray = Some(tray),
             Err(e) => error!("failed to create tray icon: {e}"),
         }
@@ -144,14 +165,9 @@ impl BgwmApp {
             return;
         };
 
-        match HotkeyEngine::start(
-            switch,
-            move_bindings,
-            launch_bindings,
-            move |action| {
-                let _ = proxy.send_event(UserEvent::Hotkey(action));
-            },
-        ) {
+        match HotkeyEngine::start(switch, move_bindings, launch_bindings, move |action| {
+            let _ = proxy.send_event(UserEvent::Hotkey(action));
+        }) {
             Ok(engine) => self.hotkeys = Some(engine),
             Err(e) => error!("failed to start hotkey engine: {e}"),
         }
@@ -223,7 +239,10 @@ impl BgwmApp {
     fn launch_or_focus_executable(&mut self, executable: &str) {
         let workspace = {
             let config = self.config.lock().expect("config poisoned");
-            let Some(rule) = config.app_rules.iter().find(|rule| rule.executable == executable)
+            let Some(rule) = config
+                .app_rules
+                .iter()
+                .find(|rule| rule.executable == executable)
             else {
                 warn!("launch hotkey fired for unknown executable: {executable}");
                 return;
@@ -278,9 +297,7 @@ impl BgwmApp {
             self.workspace_count = count;
         }
         if let Ok(current) = virtual_desktop::current_workspace_index() {
-            self.current_workspace = current
-                .min(self.workspace_count)
-                .max(WORKSPACE_INDEX_BASE);
+            self.current_workspace = current.min(self.workspace_count).max(WORKSPACE_INDEX_BASE);
         }
     }
 
@@ -314,8 +331,9 @@ impl BgwmApp {
         self.pending_tray_menu_rebuild = false;
         self.refresh_workspace_state();
 
+        let icon = self.icon_for_workspace(self.current_workspace);
         if let Some(tray) = &mut self.tray {
-            if let Err(e) = tray.rebuild_menu(self.workspace_count, self.current_workspace) {
+            if let Err(e) = tray.rebuild_menu(self.workspace_count, self.current_workspace, icon) {
                 warn!("failed to rebuild tray menu: {e}");
             }
         }
@@ -400,18 +418,10 @@ impl BgwmApp {
         }
 
         if let Some(ws) = virtual_desktop::workspace_index_from_event(&event) {
-            self.current_workspace = ws
-                .min(self.workspace_count)
-                .max(WORKSPACE_INDEX_BASE);
+            self.current_workspace = ws.min(self.workspace_count).max(WORKSPACE_INDEX_BASE);
 
             if !count_changed {
-                if let Some(tray) = &self.tray {
-                    if let Err(e) =
-                        tray.set_workspace(self.current_workspace, self.workspace_count)
-                    {
-                        warn!("failed to update tray icon: {e}");
-                    }
-                }
+                self.refresh_tray_icon();
             }
         }
     }
@@ -461,9 +471,7 @@ impl BgwmApp {
                         virtual_desktop::foreground_hwnd().is_some_and(|fg| fg == hwnd);
                     let switch_on_success = is_new_process || is_foreground;
 
-                    info!(
-                        "routing {executable} to workspace {workspace} (hwnd {hwnd}, pid {pid})",
-                    );
+                    info!("routing {executable} to workspace {workspace} (hwnd {hwnd}, pid {pid})",);
 
                     self.pending_app_routes.push(PendingAppRoute {
                         hwnd,
@@ -585,6 +593,7 @@ impl BgwmApp {
                     *cfg = updated;
                 }
                 self.reload_hotkeys();
+                self.refresh_tray_icon();
                 if let Err(e) = crate::startup::apply(&startup) {
                     warn!("startup registration sync failed: {e}");
                 }
@@ -626,10 +635,20 @@ impl BgwmApp {
 
         self.poll_pending_app_routes();
         self.poll_key_buffer_cleanup();
+        self.poll_theme_change();
         self.poll_config_reload();
         self.refresh_settings_child();
         self.poll_pending_tray_action();
         self.poll_pending_tray_menu_rebuild();
+    }
+
+    fn poll_theme_change(&mut self) {
+        let light = crate::tray::uses_light_theme();
+        if self.last_light_theme == Some(light) {
+            return;
+        }
+        self.last_light_theme = Some(light);
+        self.refresh_tray_icon();
     }
 
     fn schedule_key_buffer_cleanup(&mut self) {

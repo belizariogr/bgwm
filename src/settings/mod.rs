@@ -34,7 +34,18 @@ const WINDOW_PICKER_MIN_LIST_HEIGHT: f32 = 160.0;
 const WINDOW_PICKER_NON_LIST_HEIGHT: f32 = 120.0;
 const WINDOW_PICKER_ITEM_HEIGHT: f32 = 52.0;
 const HOTKEY_WORKSPACE_WIDTH: f32 = 200.0;
-const HOTKEY_ROW_COLUMNS: f32 = 4.0;
+const HOTKEY_ROW_COLUMNS: f32 = 5.0;
+/// Width reserved for the per-workspace tray-icon selector column.
+const HOTKEY_ICON_WIDTH: f32 = 56.0;
+/// Square size of the workspace tray-icon selector button (matches delete).
+const HOTKEY_ICON_BUTTON_SIZE: f32 = 30.0;
+/// Icon picker popup dimensions and grid metrics.
+const ICON_PICKER_DEFAULT_SIZE: Vec2 = Vec2::new(380.0, 440.0);
+const ICON_PICKER_MAX_WIDTH: f32 = 520.0;
+const ICON_PICKER_CELL_SIZE: f32 = 40.0;
+const ICON_PICKER_CELL_SPACING: f32 = 6.0;
+/// Width reserved for the vertical scrollbar so the rightmost cell isn't clipped.
+const ICON_PICKER_SCROLLBAR_ALLOWANCE: f32 = 18.0;
 const HOTKEY_ROW_VERTICAL_PADDING: i8 = 10;
 /// Width reserved for the per-workspace delete button column.
 const HOTKEY_DELETE_WIDTH: f32 = 64.0;
@@ -84,6 +95,9 @@ pub struct SettingsApp {
     window_picker_use_full_path: bool,
     pickable_windows: Vec<executable_picker::PickableWindow>,
     show_about: bool,
+    icon_picker_workspace: Option<u32>,
+    icon_search: String,
+    icon_filter: Option<crate::font_icons::IconStyle>,
 }
 
 impl SettingsApp {
@@ -103,6 +117,9 @@ impl SettingsApp {
             window_picker_use_full_path: true,
             pickable_windows: Vec::new(),
             show_about: false,
+            icon_picker_workspace: None,
+            icon_search: String::new(),
+            icon_filter: None,
         }
     }
 }
@@ -123,9 +140,7 @@ impl eframe::App for SettingsApp {
             .show(ctx, |ui| {
                 let viewport = ui.available_size();
                 egui::ScrollArea::vertical()
-                    .scroll_bar_visibility(
-                        egui::scroll_area::ScrollBarVisibility::AlwaysVisible,
-                    )
+                    .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysVisible)
                     .auto_shrink([false; 2])
                     .show(ui, |ui| {
                         ui.set_min_size(viewport);
@@ -140,6 +155,7 @@ impl eframe::App for SettingsApp {
             });
 
         self.draw_window_picker(ctx);
+        self.draw_icon_picker(ctx);
         self.draw_about_dialog(ctx);
     }
 
@@ -273,9 +289,10 @@ impl SettingsApp {
                     self.workspace_count.max(WORKSPACE_INDEX_BASE) > WORKSPACE_INDEX_BASE;
 
                 let mut workspace_to_remove = None;
+                let mut icon_picker_open_for = None;
 
                 egui::Grid::new("workspace_hotkeys_grid_v2")
-                    .num_columns(4)
+                    .num_columns(5)
                     .spacing([item_spacing, 4.0])
                     .min_col_width(0.0)
                     .min_row_height(row_height)
@@ -289,6 +306,9 @@ impl SettingsApp {
                         });
                         hotkey_grid_cell(ui, [binding_width, row_height], |ui| {
                             ui.label(column_header("Move"));
+                        });
+                        hotkey_grid_cell(ui, [HOTKEY_ICON_WIDTH, row_height], |ui| {
+                            ui.label(column_header("Icon"));
                         });
                         hotkey_grid_cell(ui, [HOTKEY_DELETE_WIDTH, row_height], |ui| {
                             ui.label(column_header(""));
@@ -348,17 +368,41 @@ impl SettingsApp {
                                 },
                             );
 
+                            let icon_ref = self
+                                .config
+                                .workspace_icons
+                                .get(&key)
+                                .map(|s| s.trim())
+                                .filter(|s| !s.is_empty())
+                                .and_then(crate::font_icons::resolve);
+                            ui.allocate_ui_with_layout(
+                                Vec2::new(HOTKEY_ICON_WIDTH, row_height),
+                                egui::Layout::left_to_right(egui::Align::Center),
+                                |ui| {
+                                    let pad = (HOTKEY_ICON_WIDTH - HOTKEY_ICON_BUTTON_SIZE) * 0.5;
+                                    ui.add_space(pad.max(0.0));
+                                    if workspace_icon_button(
+                                        ui,
+                                        Vec2::splat(HOTKEY_ICON_BUTTON_SIZE),
+                                        ws,
+                                        icon_ref,
+                                    )
+                                    .clicked()
+                                    {
+                                        icon_picker_open_for = Some(ws);
+                                    }
+                                },
+                            );
+
                             ui.allocate_ui_with_layout(
                                 Vec2::new(HOTKEY_DELETE_WIDTH, row_height),
                                 egui::Layout::right_to_left(egui::Align::Center),
                                 |ui| {
                                     ui.add_space(HOTKEY_DELETE_TRAILING_PAD);
                                     let button = egui::Button::new(
-                                        RichText::new("\u{1F5D1}").size(16.0).color(if can_remove {
-                                            ERROR
-                                        } else {
-                                            TEXT_MUTED
-                                        }),
+                                        RichText::new("\u{1F5D1}")
+                                            .size(16.0)
+                                            .color(if can_remove { ERROR } else { TEXT_MUTED }),
                                     )
                                     .fill(Color32::TRANSPARENT)
                                     .stroke(Stroke::new(1.0, BORDER));
@@ -377,6 +421,11 @@ impl SettingsApp {
                             ui.end_row();
                         }
                     });
+
+                if let Some(ws) = icon_picker_open_for {
+                    self.icon_picker_workspace = Some(ws);
+                    self.icon_search.clear();
+                }
 
                 if let Some(ws) = workspace_to_remove {
                     match virtual_desktop::remove_workspace(ws) {
@@ -622,7 +671,8 @@ impl SettingsApp {
             .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
             .show(ctx, |ui| {
                 ui.label(
-                    RichText::new("Choose a window to fill the executable field.").color(TEXT_MUTED),
+                    RichText::new("Choose a window to fill the executable field.")
+                        .color(TEXT_MUTED),
                 );
                 ui.add_space(8.0);
                 ui.checkbox(use_full_path, "Use full executable path")
@@ -658,12 +708,8 @@ impl SettingsApp {
                                         } else {
                                             &window.executable
                                         };
-                                        if window_picker_list_item(
-                                            ui,
-                                            &window.title,
-                                            display_exe,
-                                        )
-                                        .clicked()
+                                        if window_picker_list_item(ui, &window.title, display_exe)
+                                            .clicked()
                                         {
                                             selected_executable = Some(display_exe.clone());
                                         }
@@ -678,11 +724,9 @@ impl SettingsApp {
                     .add(
                         egui::Button::new(RichText::new("Cancel").color(Color32::WHITE))
                             .fill(SURFACE_ELEVATED)
-                            .stroke(Stroke::new(1.0, BORDER))
-                        
+                            .stroke(Stroke::new(1.0, BORDER)),
                     )
                     .clicked()
-                    
                 {
                     cancel = true;
                 }
@@ -694,6 +738,155 @@ impl SettingsApp {
             self.window_picker_rule = None;
         } else if cancel || !open {
             self.window_picker_rule = None;
+        }
+    }
+
+    fn draw_icon_picker(&mut self, ctx: &egui::Context) {
+        let Some(ws) = self.icon_picker_workspace else {
+            return;
+        };
+        let key = ws.to_string();
+        let current = self.config.workspace_icons.get(&key).cloned();
+
+        let mut open = true;
+        // None => no change, Some(None) => reset to number, Some(Some) => set icon spec.
+        let mut selection: Option<Option<String>> = None;
+        let picker_id = egui::Id::new(("icon_picker_window", ws));
+
+        egui::Window::new(format!("Tray icon — Workspace {ws}"))
+            .id(picker_id)
+            .open(&mut open)
+            .collapsible(false)
+            .resizable(true)
+            .default_size(ICON_PICKER_DEFAULT_SIZE)
+            .max_width(ICON_PICKER_MAX_WIDTH)
+            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+            .show(ctx, |ui| {
+                ui.label(
+                    RichText::new("Pick an icon shown in the tray for this workspace.")
+                        .color(TEXT_MUTED),
+                );
+                ui.add_space(8.0);
+                ui.add(
+                    egui::TextEdit::singleline(&mut self.icon_search)
+                        .hint_text("Search icons…")
+                        .desired_width(f32::INFINITY),
+                );
+                ui.add_space(8.0);
+
+                ui.horizontal(|ui| {
+                    style_filter_chip(ui, &mut self.icon_filter, None, "All");
+                    for style in crate::font_icons::IconStyle::ALL {
+                        style_filter_chip(ui, &mut self.icon_filter, Some(style), style.label());
+                    }
+                });
+                ui.add_space(8.0);
+
+                let search = self.icon_search.trim().to_lowercase();
+                let style_filter = self.icon_filter;
+                let filtered: Vec<&crate::font_icons::Icon> = crate::font_icons::icons()
+                    .iter()
+                    .filter(|icon| style_filter.is_none_or(|s| icon.style == s))
+                    .filter(|icon| search.is_empty() || icon.name.contains(&search))
+                    .collect();
+
+                // Item 0 is always the default (workspace number).
+                let total = 1 + filtered.len();
+
+                egui::Frame::new()
+                    .fill(SURFACE_INSET)
+                    .stroke(Stroke::new(1.0, BORDER))
+                    .corner_radius(CornerRadius::same(8))
+                    .inner_margin(Margin::same(8))
+                    .show(ui, |ui| {
+                        // Compute the grid layout from the *actual* content width
+                        // (already excludes the frame margin) minus the scrollbar,
+                        // so the row fits the box exactly and nothing is clipped.
+                        let avail_w = (ui.available_width() - ICON_PICKER_SCROLLBAR_ALLOWANCE)
+                            .max(ICON_PICKER_CELL_SIZE);
+                        let cols = (((avail_w + ICON_PICKER_CELL_SPACING)
+                            / (ICON_PICKER_CELL_SIZE + ICON_PICKER_CELL_SPACING))
+                            .floor() as usize)
+                            .max(1);
+                        let rows = total.div_ceil(cols);
+
+                        // Distribute the leftover horizontal space so the cells span
+                        // the full box width evenly (coherent with the block width).
+                        let h_spacing = if cols > 1 {
+                            ((avail_w - cols as f32 * ICON_PICKER_CELL_SIZE)
+                                / (cols - 1) as f32)
+                                .max(ICON_PICKER_CELL_SPACING)
+                        } else {
+                            ICON_PICKER_CELL_SPACING
+                        };
+                        // Set spacing *before* `show_rows` so its row-height math
+                        // (row_height_sans_spacing + item_spacing.y) matches the
+                        // actual rendered rows; otherwise the virtualized range and
+                        // total height disagree, leaving gaps.
+                        ui.spacing_mut().item_spacing =
+                            Vec2::new(h_spacing, ICON_PICKER_CELL_SPACING);
+                        egui::ScrollArea::vertical()
+                            .auto_shrink([false; 2])
+                            .show_rows(ui, ICON_PICKER_CELL_SIZE, rows, |ui, range| {
+                                for row in range {
+                                    ui.horizontal(|ui| {
+                                        for col in 0..cols {
+                                            let index = row * cols + col;
+                                            if index >= total {
+                                                break;
+                                            }
+                                            if index == 0 {
+                                                let label = RichText::new(ws.to_string())
+                                                    .size(15.0)
+                                                    .strong()
+                                                    .color(Color32::WHITE);
+                                                if icon_grid_cell(
+                                                    ui,
+                                                    label,
+                                                    current.is_none(),
+                                                    "Workspace number (default)",
+                                                )
+                                                .clicked()
+                                                {
+                                                    selection = Some(None);
+                                                }
+                                            } else {
+                                                let icon = filtered[index - 1];
+                                                let spec = icon.spec();
+                                                let selected = current.as_deref() == Some(&spec);
+                                                let label = RichText::new(icon.ch.to_string())
+                                                    .font(icon_font_id(18.0, icon.style))
+                                                    .color(Color32::WHITE);
+                                                let tooltip = format!(
+                                                    "{} · {}",
+                                                    icon.name,
+                                                    icon.style.label()
+                                                );
+                                                if icon_grid_cell(ui, label, selected, &tooltip)
+                                                    .clicked()
+                                                {
+                                                    selection = Some(Some(spec));
+                                                }
+                                            }
+                                        }
+                                    });
+                                }
+                            });
+                    });
+            });
+
+        if let Some(choice) = selection {
+            match choice {
+                Some(name) => {
+                    self.config.workspace_icons.insert(key, name);
+                }
+                None => {
+                    self.config.workspace_icons.remove(&key);
+                }
+            }
+            self.icon_picker_workspace = None;
+        } else if !open {
+            self.icon_picker_workspace = None;
         }
     }
 
@@ -921,8 +1114,7 @@ fn window_picker_list_item(ui: &mut egui::Ui, title: &str, executable: &str) -> 
     };
 
     if bg != Color32::TRANSPARENT {
-        ui.painter()
-            .rect_filled(rect, CornerRadius::same(6), bg);
+        ui.painter().rect_filled(rect, CornerRadius::same(6), bg);
     }
 
     let text_x = rect.left() + 10.0;
@@ -1066,6 +1258,7 @@ fn app_rule_executable_width(row_width: f32, item_spacing: f32) -> f32 {
 
 fn hotkey_binding_width(row_width: f32, item_spacing: f32) -> f32 {
     let fixed = HOTKEY_WORKSPACE_WIDTH
+        + HOTKEY_ICON_WIDTH
         + HOTKEY_DELETE_WIDTH
         + item_spacing * (HOTKEY_ROW_COLUMNS - 1.0);
     ((row_width - fixed) / 2.0).max(120.0)
@@ -1103,7 +1296,10 @@ fn hotkey_binding_field(
         let inner = ui.available_rect_before_wrap();
         let top = inner.center().y - field_height * 0.5 + HOTKEY_BINDING_FIELD_Y_OFFSET;
         let response = ui.put(
-            egui::Rect::from_min_size(egui::pos2(inner.min.x, top), egui::vec2(width, field_height)),
+            egui::Rect::from_min_size(
+                egui::pos2(inner.min.x, top),
+                egui::vec2(width, field_height),
+            ),
             egui::TextEdit::singleline(&mut text).hint_text(hint),
         );
         if response.changed() {
@@ -1153,6 +1349,111 @@ fn executable_picker_button(
         },
     );
     action
+}
+
+fn icon_font_id(size: f32, style: crate::font_icons::IconStyle) -> egui::FontId {
+    egui::FontId::new(size, egui::FontFamily::Name(style.family().into()))
+}
+
+fn workspace_icon_button(
+    ui: &mut egui::Ui,
+    size: Vec2,
+    workspace: u32,
+    icon: Option<crate::font_icons::IconRef>,
+) -> egui::Response {
+    let label = match icon {
+        Some(icon) => RichText::new(icon.ch.to_string())
+            .font(icon_font_id(16.0, icon.style))
+            .color(Color32::WHITE),
+        None => RichText::new(workspace.to_string())
+            .size(15.0)
+            .strong()
+            .color(Color32::WHITE),
+    };
+    ui.add(
+        egui::Button::new(label)
+            .fill(SURFACE_ELEVATED)
+            .stroke(Stroke::new(1.0, BORDER))
+            .min_size(size),
+    )
+    .on_hover_text("Choose tray icon")
+}
+
+fn icon_grid_cell(
+    ui: &mut egui::Ui,
+    label: RichText,
+    selected: bool,
+    tooltip: &str,
+) -> egui::Response {
+    let stroke = if selected {
+        Stroke::new(1.0, ACCENT)
+    } else {
+        Stroke::new(1.0, BORDER)
+    };
+    let fill = if selected {
+        ACCENT.gamma_multiply(0.22)
+    } else {
+        SURFACE_ELEVATED
+    };
+    // Zero the button padding and force an exact square so every cell has the
+    // same width regardless of how wide the glyph is.
+    let prev_padding = ui.spacing().button_padding;
+    ui.spacing_mut().button_padding = Vec2::ZERO;
+    let response = ui.add_sized(
+        Vec2::splat(ICON_PICKER_CELL_SIZE),
+        egui::Button::new(label)
+            .fill(fill)
+            .stroke(stroke)
+            .min_size(Vec2::splat(ICON_PICKER_CELL_SIZE)),
+    );
+    ui.spacing_mut().button_padding = prev_padding;
+    response.on_hover_text(tooltip)
+}
+
+fn style_filter_chip(
+    ui: &mut egui::Ui,
+    current: &mut Option<crate::font_icons::IconStyle>,
+    value: Option<crate::font_icons::IconStyle>,
+    label: &str,
+) {
+    let selected = *current == value;
+    let text_color = if selected { Color32::WHITE } else { TEXT_MUTED };
+    let fill = if selected {
+        ACCENT.gamma_multiply(0.22)
+    } else {
+        SURFACE_ELEVATED
+    };
+    let stroke = if selected {
+        Stroke::new(1.0, ACCENT.gamma_multiply(0.8))
+    } else {
+        Stroke::new(1.0, BORDER)
+    };
+    if ui
+        .add(
+            egui::Button::new(RichText::new(label).strong().color(text_color))
+                .fill(fill)
+                .stroke(stroke),
+        )
+        .clicked()
+    {
+        *current = value;
+    }
+}
+
+fn install_icon_font(ctx: &egui::Context) {
+    let mut fonts = egui::FontDefinitions::default();
+    for style in crate::font_icons::IconStyle::ALL {
+        let family = style.family();
+        fonts.font_data.insert(
+            family.to_owned(),
+            std::sync::Arc::new(egui::FontData::from_static(style.font_ttf())),
+        );
+        fonts.families.insert(
+            egui::FontFamily::Name(family.into()),
+            vec![family.to_owned()],
+        );
+    }
+    ctx.set_fonts(fonts);
 }
 
 fn hotkey_help_button(ui: &mut egui::Ui) -> egui::Response {
@@ -1314,6 +1615,7 @@ pub fn run_standalone() -> Result<(), eframe::Error> {
         native_options,
         Box::new(|cc| {
             apply_theme(&cc.egui_ctx);
+            install_icon_font(&cc.egui_ctx);
             Ok(Box::new(SettingsApp::new(config)))
         }),
     )
