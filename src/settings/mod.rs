@@ -252,6 +252,16 @@ impl SettingsApp {
                 self.config.startup.launch_at_login = launch_at_login;
             }
         });
+
+        section_card(ui, "Updates", "", |ui| {
+            let mut auto_update = self.config.auto_update;
+            if ui
+                .checkbox(&mut auto_update, "Update automatically")
+                .changed()
+            {
+                self.config.auto_update = auto_update;
+            }
+        });
     }
 
     fn draw_hotkeys_tab(&mut self, ui: &mut egui::Ui) {
@@ -308,7 +318,12 @@ impl SettingsApp {
                             ui.label(column_header("Move"));
                         });
                         hotkey_grid_cell(ui, [HOTKEY_ICON_WIDTH, row_height], |ui| {
-                            ui.label(column_header("Icon"));
+                            ui.with_layout(
+                                egui::Layout::centered_and_justified(egui::Direction::TopDown),
+                                |ui| {
+                                    ui.label(column_header("Icon"));
+                                },
+                            );
                         });
                         hotkey_grid_cell(ui, [HOTKEY_DELETE_WIDTH, row_height], |ui| {
                             ui.label(column_header(""));
@@ -813,8 +828,7 @@ impl SettingsApp {
                         // Distribute the leftover horizontal space so the cells span
                         // the full box width evenly (coherent with the block width).
                         let h_spacing = if cols > 1 {
-                            ((avail_w - cols as f32 * ICON_PICKER_CELL_SIZE)
-                                / (cols - 1) as f32)
+                            ((avail_w - cols as f32 * ICON_PICKER_CELL_SIZE) / (cols - 1) as f32)
                                 .max(ICON_PICKER_CELL_SPACING)
                         } else {
                             ICON_PICKER_CELL_SPACING

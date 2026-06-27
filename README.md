@@ -11,6 +11,7 @@ A fast, Windows-only desktop utility written in **Rust** for virtual desktop (wo
 - **Settings: hotkeys** — Detects how many desktops exist and lets you assign switch/move hotkeys per workspace.
 - **Settings: app rules** — Map executables to workspaces (e.g. `chrome.exe` → Workspace 1). When the app’s main window opens, it is moved there and that desktop is activated.
 - **Move window hotkeys** — Send the focused window to a workspace and switch to it (default: `Win+Shift+1..9`).
+- **Automatic updates** — On launch BGWM checks GitHub releases; if a newer version exists it offers to download and run the installer. Declining a version stops prompts until the next release, and prompts are throttled to at most once every two days.
 
 ## Requirements
 

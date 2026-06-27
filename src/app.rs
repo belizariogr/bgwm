@@ -50,6 +50,8 @@ pub enum UserEvent {
     Menu(MenuEvent),
     Desktop(DesktopEvent),
     Hotkey(HotkeyAction),
+    /// An update was downloaded; exit so the installer can replace the binary.
+    QuitForUpdate,
 }
 
 #[derive(Debug)]
@@ -152,6 +154,13 @@ impl BgwmApp {
         match ChildProcessJob::new() {
             Ok(job) => self.child_job = Some(job),
             Err(e) => error!("failed to create child process job: {e}"),
+        }
+
+        let auto_update = self.config.lock().expect("config poisoned").auto_update;
+        if auto_update {
+            if let Some(proxy) = self.proxy.clone() {
+                crate::updater::spawn_startup_check(proxy);
+            }
         }
     }
 
@@ -745,6 +754,11 @@ impl ApplicationHandler<UserEvent> for BgwmApp {
                 }
             }
             UserEvent::Desktop(event) => self.handle_desktop_event(event),
+            UserEvent::QuitForUpdate => {
+                info!("exiting to apply update");
+                self.shutdown();
+                event_loop.exit();
+            }
         }
     }
 

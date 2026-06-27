@@ -69,6 +69,13 @@ pub struct Config {
     pub settings_window: SettingsWindow,
     #[serde(default)]
     pub startup: StartupSettings,
+    /// When enabled, BGWM checks GitHub for newer releases on launch.
+    #[serde(default = "default_auto_update")]
+    pub auto_update: bool,
+}
+
+fn default_auto_update() -> bool {
+    true
 }
 
 impl Default for Config {
@@ -87,6 +94,7 @@ impl Default for Config {
             app_rules: Vec::new(),
             settings_window: SettingsWindow::default(),
             startup: StartupSettings::default(),
+            auto_update: default_auto_update(),
         }
     }
 }

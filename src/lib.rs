@@ -10,6 +10,7 @@ pub mod settings;
 mod single_instance;
 mod startup;
 mod tray;
+mod updater;
 
 pub use single_instance::{SingleInstance, SingleInstanceError};
 
