@@ -178,14 +178,14 @@ fn prompt_user(release: &ReleaseInfo) -> bool {
 
     let current = env!("CARGO_PKG_VERSION");
     let text = format!(
-        "Uma nova versão do BGWM está disponível.\n\n\
-         Versão atual: {current}\n\
-         Nova versão: {}\n\n\
-         Deseja baixar e instalar a atualização agora?",
+        "A new version of BGWM is available.\n\n\
+         Current version: {current}\n\
+         New version: {}\n\n\
+         Do you want to download and install the update now?",
         release.version
     );
     let text_w = wide(&text);
-    let title_w = wide("BGWM — Atualização disponível");
+    let title_w = wide("BGWM — Update available");
 
     let result = unsafe {
         MessageBoxW(
