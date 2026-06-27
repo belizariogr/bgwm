@@ -542,7 +542,7 @@ dependencies = [
 
 [[package]]
 name = "bgwm"
-version = "0.9.0"
+version = "0.9.2"
 dependencies = [
  "ab_glyph",
  "crossbeam-channel",
